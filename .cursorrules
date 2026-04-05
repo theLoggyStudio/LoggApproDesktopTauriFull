@@ -1,0 +1,29 @@
+# Instructions de Développement : Architecture Unique & Dossier /src/items
+
+## 1. Structure de Dossiers Stricte
+- **Localisation Unique** : Tous les éléments d'interface réutilisables (Inputs, Tables, Modals, Buttons, etc.) doivent impérativement être créés dans le dossier `src/items`.
+- **Un Fichier par Type d'Objet** : Chaque type d'élément doit posséder **un seul et unique fichier** si le fichier nexiste pas, cree le.
+  - *Exemple* : `src/items/Input.tsx`, `src/items/Table.tsx`, `src/items/Modal.tsx`.
+- **Interdiction de Doublons** : Ne crée jamais de fichiers comme `Input2.tsx`, `UserTable.tsx` ou `CustomModal.tsx` si un composant de base existe déjà dans `src/items`.
+
+## 2. Règle de Refactorisation Systématique (CRUCIAL)
+- **Détection et Correction** : Si tu remarques dans le code un élément (Table, Input, Modal, etc.) qui ne respecte pas cette architecture (doublon, composant local ou fichier multiple) :
+  1. **Remplace-le** par l'élément correspondant situé dans `src/items`.
+  2. **Fusionne** ses fonctionnalités spécifiques dans le fichier unique de `src/items` via des **props optionnelles**.
+  3. **Supprime** l'ancien élément obsolète pour nettoyer la base de code.
+
+## 3. Évolution des Composants (Principe d'Extension)
+- **Modification au lieu de Création** : Si tu as besoin d'une variante d'un élément, **modifie le fichier existant** dans `src/items`.
+- **Props Optionnelles (?)** : Ajoute les nouvelles fonctionnalités (ex: pagination, validation) de manière optionnelle pour ne pas casser les autres instances du projet.
+- **Non-Breaking** : L'élément doit rester rétrocompatible par défaut.
+
+## 4. Gestion des Données et États
+- **Mises à jour Incrémentales** : Pour les listes/tableaux, ajoute les données au tableau originel via `[...prev, ...next]` sans réinitialiser l'état global.
+
+## 5. Format de Code
+- Utilise des **Named Exports** (ex: `export const Input = ...`).
+
+## 6. Les constants , 
+- Utilise le dossier **src/constants** pour stocker les variable ex: **codeCouleur.constant.ts** pour les couleur en hexadecimale et recuperer toujours les donnees du fichier env dans un de ces fivhier,JAMAIS AILLEUR.
+
+- Réponses à l’utilisateur en **français** sauf demande contraire.
