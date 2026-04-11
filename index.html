@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/logo192.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LoggAppro Desktop</title>
+    <style>
+      /* Splash d'ouverture - chargement immédiat, indépendant du bundle */
+      #opening-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        background-color: #ffffff;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+        animation: opening-overlay-fade-out 8s ease-in-out forwards;
+      }
+      #opening-splash.hidden { display: none !important; }
+      @keyframes opening-overlay-fade-out {
+        0%, 75% { opacity: 1; }
+        100% { opacity: 0; }
+      }
+      #opening-splash .opening-content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1rem;
+      }
+      #opening-splash .opening-logo {
+        width: 280px;
+        height: auto;
+        animation: opening-logo-fade-in 2s ease-in-out forwards;
+      }
+      @keyframes opening-logo-fade-in {
+        0% { opacity: 0; }
+        100% { opacity: 1; }
+      }
+      #opening-splash .opening-title {
+        display: flex;
+        font-family: 'Montserrat', 'Segoe UI', sans-serif;
+        font-size: 2rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      #opening-splash .opening-letter {
+        display: inline-block;
+        opacity: 0;
+        animation: opening-letter-appear 0.18s ease-out forwards;
+      }
+      #opening-splash .opening-letter span {
+        display: inline-block;
+        animation: opening-letter-color 2s ease-in-out forwards;
+      }
+      @keyframes opening-letter-appear {
+        from { opacity: 0; transform: scale(0.8); }
+        to { opacity: 1; transform: scale(1); }
+      }
+      @keyframes opening-letter-color {
+        0%, 9% { color: #fdda37; }
+        100% { color: #5A28A5; }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Splash immédiat : HTML/CSS pur, aucun chargement JS -->
+    <div id="opening-splash" role="presentation">
+      <div class="opening-content">
+        <img src="./opening-logo.png" alt="LoggAppro" class="opening-logo" width="280" height="280" />
+        <div class="opening-title">
+          <span class="opening-letter" style="animation-delay: 2.00s"><span>L</span></span>
+          <span class="opening-letter" style="animation-delay: 2.18s"><span>o</span></span>
+          <span class="opening-letter" style="animation-delay: 2.36s"><span>g</span></span>
+          <span class="opening-letter" style="animation-delay: 2.54s"><span>g</span></span>
+          <span class="opening-letter" style="animation-delay: 2.72s"><span>P</span></span>
+          <span class="opening-letter" style="animation-delay: 2.90s"><span>a</span></span>
+          <span class="opening-letter" style="animation-delay: 3.08s"><span>t</span></span>
+          <span class="opening-letter" style="animation-delay: 3.26s"><span>i</span></span>
+          <span class="opening-letter" style="animation-delay: 3.44s"><span>e</span></span>
+          <span class="opening-letter" style="animation-delay: 3.62s"><span>n</span></span>
+          <span class="opening-letter" style="animation-delay: 3.80s"><span>t</span></span>
+        </div>
+      </div>
+    </div>
+    <script>
+      (function() {
+        var STORAGE_KEY = 'loggappro_opening_shown_session';
+        var splash = document.getElementById('opening-splash');
+        var animDuration = 8000;
+        var startTime = Date.now();
+        var skipAnimation = false;
+        try {
+          if (sessionStorage.getItem(STORAGE_KEY) === '1') {
+            skipAnimation = true;
+            if (splash) splash.classList.add('hidden');
+          }
+        } catch (e) {}
+        function markOpeningDone() {
+          try {
+            sessionStorage.setItem(STORAGE_KEY, '1');
+          } catch (e) {}
+        }
+        function hideSplash() {
+          if (!splash) return;
+          if (skipAnimation) return;
+          var elapsed = Date.now() - startTime;
+          var remaining = Math.max(0, animDuration - elapsed);
+          if (remaining > 0) {
+            setTimeout(function() {
+              splash.classList.add('hidden');
+              markOpeningDone();
+            }, remaining);
+          } else {
+            splash.classList.add('hidden');
+            markOpeningDone();
+          }
+        }
+        if (!skipAnimation) {
+          window.addEventListener('loggappro-ready', hideSplash, { once: true });
+          setTimeout(hideSplash, animDuration);
+        }
+      })();
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

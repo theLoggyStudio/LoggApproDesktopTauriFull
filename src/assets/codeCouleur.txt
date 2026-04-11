@@ -1,0 +1,38 @@
+------basic-------
+violet: #5A28A5
+jaune: #fdda37
+rouge: #F13B3B
+vert:  #35f51a
+
+
+----- v1 ----
++projet de base
++privilege
++payement(visa,OM,WAVE)
++identifiaction(email)
+-qrcode pour installer l'application
+-tuto youtube
+-token(bcrypte pour la base de donnee,CryptoJSpour le reste)
+
+
+----- v2 ----
+-identifiaction(sms)
+-gestion du format tel
+-page statistique
+-page impression
+-UUID à la place des id
+-changement de UUID chaque jour (penser à commen gerrer le qrcode )
+-systeme de file d'attent des requette SQL
+-ajouter la duréeEstimé a nomActe 
+-exel pour les incersions de client
+
+
+----- v3 ----
+
+
+
+
+
+----- commande post git avec react
+npm install --legacy-peer-deps
+-regex

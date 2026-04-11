@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <!-- Règles pare-feu pour accès web LoggAppro (ports 7061, 7062) -->
+    <!-- S'exécute après installation avec droits admin (InstallScope perMachine) -->
+    <CustomAction Id="AddFirewallRules"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore"
+                  Directory="TARGETDIR"
+                  ExeCommand='netsh.exe advfirewall firewall add rule name="LoggAppro Web 7061" dir=in action=allow protocol=TCP localport=7061'
+                  />
+    <CustomAction Id="AddFirewallRules7062"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore"
+                  Directory="TARGETDIR"
+                  ExeCommand='netsh.exe advfirewall firewall add rule name="LoggAppro Web 7062" dir=in action=allow protocol=TCP localport=7062'
+                  />
+    <InstallExecuteSequence>
+      <Custom Action="AddFirewallRules" After="InstallFiles"><![CDATA[NOT REMOVE]]></Custom>
+      <Custom Action="AddFirewallRules7062" After="AddFirewallRules"><![CDATA[NOT REMOVE]]></Custom>
+    </InstallExecuteSequence>
+  </Fragment>
+</Wix>

@@ -1,8 +1,29 @@
-# Instructions de Développement : Architecture Unique & Dossier /src/items
+# Instructions de Développement : Architecture Unique & Dossier `/src/items`
+
+## 0. Structure cible du dépôt (réduction de taille & réutilisabilité)
+
+- **`src/items/`** — seul emplacement des **primitifs UI** réutilisables (Modal, Table, Input, Loading, Alert, …). Un fichier = un type d’élément ; imports nommés via `src/items/index.ts` quand plusieurs composants sont nécessaires.
+- **`src/constants/`** — constantes globales (couleurs, env typé, privilèges, admin). **`codeCouleur.constant.ts`** expose les hex du thème par défaut ; le détail multi-thèmes reste dans `body/constants/themes.constants.ts` (pas dupliquer les palettes).
+- **`src/body/Modules/`** — modules métier **composés** (écrans, formulaires spécifiques, NavTop, etc.). Ils doivent **composer** les primitifs depuis `src/items` au lieu de recréer Modal/Table/Input.
+- **`src/body/Pages/`**, **`src/body/controllers/`**, **`src/body/context/`** — inchangés fonctionnellement ; préférer **`React.lazy` + `Suspense`** pour les pages lourdes afin de réduire le chunk initial (objectif taille bundle).
+
+### Cartographie actuelle (implémentation → fichier canonique)
+
+| Fichier `src/items` | Implémentation réelle (temporaire) |
+|---------------------|-----------------------------------|
+| `Modal.tsx`         | `body/Modules/ModalGlobal.tsx`    |
+| `Table.tsx`         | `body/Modules/Tables.tsx`         |
+| `Loading.tsx`       | `body/Modules/Loading.tsx`        |
+| `Alert.tsx`         | `body/Modules/Alert.tsx`          |
+| `Input.tsx`         | Champ Bootstrap centralisé (local)|
+
+Tout **nouveau** écran ou refactor doit importer depuis `src/items` (ou `src/constants`) plutôt que depuis `body/Modules` pour les primitifs.
+
+---
 
 ## 1. Structure de Dossiers Stricte
 - **Localisation Unique** : Tous les éléments d'interface réutilisables (Inputs, Tables, Modals, Buttons, etc.) doivent impérativement être créés dans le dossier `src/items`.
-- **Un Fichier par Type d'Objet** : Chaque type d'élément doit posséder **un seul et unique fichier** si le fichier nexiste pas, cree le.
+- **Un Fichier par Type d'Objet** : Chaque type d'élément doit posséder **un seul et unique fichier** si le fichier n'existe pas, crée-le.
   - *Exemple* : `src/items/Input.tsx`, `src/items/Table.tsx`, `src/items/Modal.tsx`.
 - **Interdiction de Doublons** : Ne crée jamais de fichiers comme `Input2.tsx`, `UserTable.tsx` ou `CustomModal.tsx` si un composant de base existe déjà dans `src/items`.
 
@@ -23,7 +44,7 @@
 ## 5. Format de Code
 - Utilise des **Named Exports** (ex: `export const Input = ...`).
 
-## 6. Les constants , 
-- Utilise le dossier **src/constants** pour stocker les variable ex: **codeCouleur.constant.ts** pour les couleur en hexadecimale et recuperer toujours les donnees du fichier env dans un de ces fivhier,JAMAIS AILLEUR.
+## 6. Les constantes
+- Utilise le dossier **`src/constants`** pour les variables globales (ex. **`codeCouleur.constant.ts`** pour les couleurs en hexadécimal) et récupère les données issues du fichier **env** via **`environement.constant`** (réexporté par `src/constants/index.ts`), **jamais** en dur ailleurs pour les secrets / URLs sensibles.
 
-- Réponses à l’utilisateur en **français** sauf demande contraire.
+- Réponses à l'utilisateur en **français** sauf demande contraire.

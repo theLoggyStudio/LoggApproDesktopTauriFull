@@ -1,0 +1,3 @@
+violet: #5A28A5
+jaune:  #fdda37
+vert:   #8EFF30

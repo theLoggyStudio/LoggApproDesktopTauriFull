@@ -1,0 +1,9 @@
+/* Ombre à gauche pour la colonne profil (photo + QR) */
+.shadow-lg-left {
+  box-shadow: 6px 0 12px rgba(0, 0, 0, 0.08);
+}
+
+/* Labels de la page Profil : couleur secondaire du thème */
+.page-profil .form-label {
+  color: var(--secondary) !important;
+}

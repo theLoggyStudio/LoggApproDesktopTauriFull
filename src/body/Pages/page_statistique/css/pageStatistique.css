@@ -1,0 +1,14 @@
+.stat-body {
+    background-color: var(--primary) ;
+    color:var(--secondary);
+  } 
+  
+  .card {
+    box-shadow: 0 4px 8px var(--primary);
+  }
+  
+  .table th,
+  .table td {
+    vertical-align: middle;
+  }
+  
