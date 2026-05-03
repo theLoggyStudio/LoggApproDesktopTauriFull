@@ -1,5 +1,7 @@
+import { Modal as AntdModal } from "antd";
+
 /**
- * Point d’entrée canonique pour les modales (voir `.cursorrules`).
- * Implémentation : `body/Modules/ModalGlobal`.
+ * Fenêtre modale (Ant Design). Conserve les méthodes statiques (`confirm`, `info`, …).
+ * @see `.cursorrules` — primitifs dans `src/items`.
  */
-export { default as Modal } from "../body/Modules/ModalGlobal.tsx";
+export const Modal = AntdModal;

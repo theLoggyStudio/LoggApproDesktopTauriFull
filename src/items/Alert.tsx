@@ -1,5 +1,4 @@
-/**
- * Point d’entrée canonique pour les alertes / bandeaux (voir `.cursorrules`).
- * Implémentation : `body/Modules/Alert`.
- */
-export { Alert } from "../body/Modules/Alert.tsx";
+import { Alert as AntdAlert } from "antd";
+
+/** Alerte inline bannière (Ant Design). Pour les toasts globaux, voir `AppAlert` + `AlertContext`. */
+export const Alert = AntdAlert;

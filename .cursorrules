@@ -3,28 +3,36 @@
 ## 0. Structure cible du dépôt (réduction de taille & réutilisabilité)
 
 - **`src/items/`** — seul emplacement des **primitifs UI** réutilisables (Modal, Table, Input, Loading, Alert, …). Un fichier = un type d’élément ; imports nommés via `src/items/index.ts` quand plusieurs composants sont nécessaires.
-- **`src/constants/`** — constantes globales (couleurs, env typé, privilèges, admin). **`codeCouleur.constant.ts`** expose les hex du thème par défaut ; le détail multi-thèmes reste dans `body/constants/themes.constants.ts` (pas dupliquer les palettes).
+- **`src/constants/`** — constantes globales (couleurs, env typé, privilèges, admin). **`codeCouleur.constant.ts`** expose les hex du thème par défaut ; le détail multi-thèmes est dans **`src/constants/themes.constants.ts`** (tableau `themes`, type `ThemeColors` ; pas dupliquer les palettes).
 - **`src/body/Modules/`** — modules métier **composés** (écrans, formulaires spécifiques, NavTop, etc.). Ils doivent **composer** les primitifs depuis `src/items` au lieu de recréer Modal/Table/Input.
 - **`src/body/Pages/`**, **`src/body/controllers/`**, **`src/body/context/`** — inchangés fonctionnellement ; préférer **`React.lazy` + `Suspense`** pour les pages lourdes afin de réduire le chunk initial (objectif taille bundle).
 
-### Cartographie actuelle (implémentation → fichier canonique)
+### Cartographie actuelle (primitifs dans `src/items`)
 
-| Fichier `src/items` | Implémentation réelle (temporaire) |
-|---------------------|-----------------------------------|
-| `Modal.tsx`         | `body/Modules/ModalGlobal.tsx`    |
-| `Table.tsx`         | `body/Modules/Tables.tsx`         |
-| `Loading.tsx`       | `body/Modules/Loading.tsx`        |
-| `Alert.tsx`         | `body/Modules/Alert.tsx`          |
-| `Input.tsx`         | Champ Bootstrap centralisé (local)|
+| Fichier `src/items` | Rôle |
+|---------------------|------|
+| `Modal.tsx`         | `Modal` Ant Design (dont `Modal.confirm`, …) |
+| `Table.tsx`         | `Table` Ant Design typée |
+| `Loading.tsx`       | `Spin` Ant Design (composant `Loading`) |
+| `Alert.tsx`         | `Alert` Ant Design (bannière inline) |
+| `Button.tsx`        | `Button` Ant Design |
+| `Panel.tsx`         | `Card` Ant Design (composant `Panel`) |
+| `Offcanvas.tsx`     | `Drawer` Ant Design |
+| `NavBar.tsx`        | `Layout.Header` Ant Design |
+| `Text.tsx`          | `Typography.Text` Ant Design |
+| `Input.tsx`         | Champ Bootstrap (`Form.Control`) pour les écrans hérités |
+| `Select.tsx`        | `Select` Ant Design + option `createRowLabel` / `onCreateRowClick` (1re ligne du menu → modal ; textes `stockSelectCreateRow` dans `Pages.constant.json`) |
 
-Tout **nouveau** écran ou refactor doit importer depuis `src/items` (ou `src/constants`) plutôt que depuis `body/Modules` pour les primitifs.
+Les pages **stock**, **connexion** et **`App.tsx`** importent `Modal`, `Button`, `Table`, `Loading`, `Alert`, `NavBar`, `Select` depuis `src/items` / `src/items/index.ts`.
+
+Tout **nouveau** écran ou refactor doit importer ces primitifs depuis `src/items` (ou `src/constants`) plutôt que de dupliquer des wrappers locaux.
 
 ---
 
 ## 1. Structure de Dossiers Stricte
 - **Localisation Unique** : Tous les éléments d'interface réutilisables (Inputs, Tables, Modals, Buttons, etc.) doivent impérativement être créés dans le dossier `src/items`.
 - **Un Fichier par Type d'Objet** : Chaque type d'élément doit posséder **un seul et unique fichier** si le fichier n'existe pas, crée-le.
-  - *Exemple* : `src/items/Input.tsx`, `src/items/Table.tsx`, `src/items/Modal.tsx`.
+  - *Exemple* : `src/items/Input.tsx`,`src/items/Text.tsx`, `src/items/Table.tsx`, `src/items/Modal.tsx`,`src/items/panel.tsx`,`src/items/offcanva.tsx`,`src/items/alert.tsx`,`src/items/navBar.tsx`,etc....
 - **Interdiction de Doublons** : Ne crée jamais de fichiers comme `Input2.tsx`, `UserTable.tsx` ou `CustomModal.tsx` si un composant de base existe déjà dans `src/items`.
 
 ## 2. Règle de Refactorisation Systématique (CRUCIAL)
@@ -48,3 +56,49 @@ Tout **nouveau** écran ou refactor doit importer depuis `src/items` (ou `src/co
 - Utilise le dossier **`src/constants`** pour les variables globales (ex. **`codeCouleur.constant.ts`** pour les couleurs en hexadécimal) et récupère les données issues du fichier **env** via **`environement.constant`** (réexporté par `src/constants/index.ts`), **jamais** en dur ailleurs pour les secrets / URLs sensibles.
 
 - Réponses à l'utilisateur en **français** sauf demande contraire.
+
+## 7. Les thèmes et couleurs (fonctionnement actuel)
+
+- **Source des palettes** : `src/constants/themes.constants.ts` exporte `themes: ThemeColors[]` et `ActualthemeNumber`. Chaque entrée contient au minimum **`primary`**, **`secondary`**, **`tertiary`**, **`textPrimary`**, **`textSecondary`**, **`textTertiary`** ; des clés optionnelles **`textBody`**, **`textBodySecondary`**, **`textBodyTertiary`** définissent le texte sur fond clair (contenu Ant Design, cartes). Le thème par défaut (index **0**) est **vert et blanc** (`primary` vert, surfaces blanches / vert très pâle).
+- **Sémantique** :
+  - **`primary`** : couleur principale (sidebar stock, bandeau connexion, `token.colorPrimary`).
+  - **`secondary`** : accent (ex. entrée sélectionnée du menu, bouton sur fond coloré).
+  - **`tertiary`** : fond des cartes / en-tête (`token.colorBgContainer`).
+  - **`textPrimary` / `textSecondary` / `textTertiary`** : texte sur fond **`primary`** (menu latéral sombre, colonne connexion).
+  - **`textBody`*** (optionnel) : texte sur fond clair ; sinon Ant Design utilise des gris par défaut (`AntdThemeBridge`).
+- **Variables CSS** : `src/main.tsx` (`ThemeCssSync` dans `ThemeProvider`) copie chaque clé `k` de la palette active vers **`--k`** sur `document.documentElement` (ex. `--primary`, `--textSecondary`). Les composants ou feuilles peuvent donc utiliser `var(--primary)` etc.
+- **Couleurs nommées pour le code** : `src/constants/ts/Couleur.constant.ts` mappe des alias vers ces variables (`Couleur.primary` → `var(--primary)`, …) pour éviter les hex en dur dans le TSX.
+- **Ant Design** : `src/components/AntdThemeBridge.tsx` enveloppe l’app avec `ConfigProvider` + locale `fr_FR` et un **thème token** dérivé de la palette courante (`themeNumber` depuis `ThemeContext`) : `colorPrimary`, `colorText*`, `colorBgContainer`, composants `Layout` / `Menu` (menu latéral sombre aligné sur `primary`).
+- **Choix du thème** : `ThemeContext` (`src/context/ThemeContext.tsx`) conserve `themeNumber` ; l’index utilisé est `themes[themeNumber] ?? themes[0]`.
+
+## 9.html,css et antdesign uniquement pour lapparence.
+
+## 10.la base de donne
+-il doit etre creer de maiere a ce que si la db ou la table n'exsiste pas, elle se cree automatiquememt cotesqllite, 
+-il au aussi un modal qui permette dentrer les donne dune autre base de donne (si elle est en ligne)
+- **Fichiers SQLite (préfixe `dbap`)** : catalogue `dbap.db`, bases métier `dbapyellow.db`, `dbapgreen.db`, …, admin `dbapadmin.db`, stock `dbap_stock.db`. Au premier lancement, les anciens fichiers `dbla*.db` / `stock_management.db` sont renommés une fois (voir `migrate_legacy_dbla_to_dbap_filenames` dans `src-tauri/src/db.rs`).
+
+## 11.regle des constantes
+- aucun text ne doit etre ecri en dur dans la partie html ou tsx, il doivent toujours provenir de `src/constants/json/Pages.constant.json`au format {nomPage:['text1','text2'...]} dans lordre de haut en bas, et de quche a droite.Daileur il faut des constant pour les couleurs, pour les api dans `src/constants/ts/Couleur.constant.ts`
+
+## 12.Regles de `src/constants/json/Pages.constant.json`
+cree le projet de maniere a ce que ce sois par un json qu'on puisse creer tout champs, toute page, toute lignes.En simple on a les`src/items` et le json permet de savoir quel elememt metre ou pour chaque page. on ne doit avoir qu'un seul json pour la totalite du projet,ce json sera toujours `src/constants/json/Pages.constant.json` il doit tout gerer jusqu'au endpoint. ATTENTION, le json ne modifie pas le css contenu dans `src/items`, il permet eclusivement de creer des dispositions pour les page et formulaire et de remplire les parametre de l'item pour modifier la strucure physique dun item ou des page et permet de creer les pages.
+  - *Exemple* : {pages:['nomPage1':{item:{type:nomDunItemDeSrc/items,placeholer:'...',formule:fomuleSiIlSagitDunCalclulouunadditonDeStrings...,TagDuFormulaire:unTagQuiPermetDeSavoirqueCetItemFaitPartiDunFormulaire}},'nomPage2':{...},...]}
+  -*Attention* chaque formulaire creer doit imperativememt avoir les privilege CRUD,read only,Et delet.pareil.
+  -*Attention* il est important que seul le json sois a toucher pour cher une nouvelle table, unouveau formuleiretc... on me doit pas avoir a toucher le code au sens propre 
+  -*Attention* privilegie la creation de modal,de offpane que de page.
+
+
+## 12.les uml:
+  quand dans on fait un projet,cree un uml que tu mettra dans asset et que tu modifiera au fure et a mesure du projet, on ne doit avoir qun seul et unique fichier uml.txt
+
+## 13 le backend rust: 
+la strucuture dubakende doit etre le plus reusable possible pour un gain optimal d'espace et il doit avoir une structure propre et coherente.
+- **Création d’utilisateur** : toute commande qui insère un compte (`tab_user` / `tab_connection`, etc.) doit exiger une **preuve sadmin** côté Rust. Actuellement, `ensure_default_demo_docteur` vérifie `sadminLogin` + `sadminPassword` dans le corps déchiffré : login `sadmin` (insensible à la casse) et mot de passe du jour (`706` + JJMMYYYY, comme sur le front). Aucun appel automatique au chargement de la page de connexion.
+
+## 14. Écran d’ouverture (opening)
+
+- **Contenu obligatoire** : afficher **le nom du produit** et **le logo** du projet, visibles dès le chargement (avant le bundle React).
+- **Implémentation actuelle** :
+  - **`index.html`** : bloc `#opening-splash` (HTML/CSS pur). **Logo** : `./opening-logo.png` (fichier servi depuis `public/opening-logo.png`, généré/copié par le script d’icônes). **Nom** : titre animé lettre par lettre dans `.opening-title`, aligné sur **`pages.opening[0]`** dans `src/constants/json/Pages.constant.json` (actuellement « LoggAppro ») — en cas de renommage, mettre à jour le JSON **et** les lettres / `aria-label` dans `index.html`.
+  - **Disparition du splash** : à la réception de l’événement `loggappro-ready` (émis quand l’app React est montée, voir `main.tsx`), ou après un délai maximum ; `sessionStorage` évite de rejouer l’animation dans la même session navigateur.

@@ -1,8 +1,8 @@
-//! Schéma obfusqué pour dblaadmin : noms de colonnes aléatoires (10 lettres)
+//! Schéma obfusqué pour dbapadmin : noms de colonnes aléatoires (10 lettres)
 //! et chiffrement des données. Le mapping est stocké dans un fichier chiffré
-//! à la création de dblaadmin.
+//! à la création de dbapadmin.
 
-/// Erreur signalant un échec de déchiffrement (clé incorrecte) → recréation dblaadmin
+/// Erreur signalant un échec de déchiffrement (clé incorrecte) → recréation dbapadmin
 pub const ADMIN_DECRYPT_FAILED: &str = "ADMIN_DECRYPT_FAILED";
 
 use serde::{Deserialize, Serialize};
@@ -189,7 +189,7 @@ impl AdminSchema {
     }
 
     /// Déchiffre ou retourne Err(ADMIN_DECRYPT_FAILED) si la clé ne déchiffre pas.
-    /// Utilisé pour déclencher la recréation de dblaadmin en cas d'échec.
+    /// Utilisé pour déclencher la recréation de dbapadmin en cas d'échec.
     pub fn decrypt_value_or_fail(&self, table: &str, logical_col: &str, encrypted: &str) -> Result<String, String> {
         if encrypted.is_empty() {
             return Ok(String::new());
@@ -246,7 +246,7 @@ pub fn save_schema(schema: &AdminSchema) -> Result<(), String> {
     fs::write(&path, &enc).map_err(|e| format!("Écriture schéma: {}", e))
 }
 
-/// Charge le schéma ou l'initialise. Si dblaadmin existe déjà avec l'ancien schéma,
+/// Charge le schéma ou l'initialise. Si dbapadmin existe déjà avec l'ancien schéma,
 /// utilise un mapping identité (legacy). Sinon génère des noms aléatoires.
 pub async fn load_or_init_schema(conn: &mut sqlx::AnyConnection) -> Result<AdminSchema, String> {
     let path = schema_file_path();

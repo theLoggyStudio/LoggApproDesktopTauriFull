@@ -1,6 +1,6 @@
 //! Couche SQLx - connexions multi-SGBD (SQLite, MySQL, PostgreSQL)
 //! Remplace rusqlite pour une base commune et extensible.
-//! Si dblaadmin semble corrompu, il est supprimé et recréé de zéro.
+//! Si dbapadmin semble corrompu, il est supprimé et recréé de zéro.
 
 use crate::admin_schema;
 use crate::crypto;
@@ -55,12 +55,12 @@ pub fn build_connection_url(config: &DbConfig, color: &str) -> Result<String, St
         "sqlite" => {
             let path = if config.path.is_empty() {
                 let dir = db::get_databases_dir();
-                let db_name = format!("dbla{}.db", color);
+                let db_name = crate::db::dbap_color_db_filename(color);
                 dir.join(db_name)
             } else {
                 let p = Path::new(&config.path);
                 if p.is_dir() {
-                    p.join(format!("dbla{}.db", color))
+                    p.join(crate::db::dbap_color_db_filename(color))
                 } else {
                     p.to_path_buf()
                 }
@@ -237,7 +237,7 @@ pub async fn restore_admin_payments(conn: &mut AnyConnection, backup: &[PaymentB
     Ok(())
 }
 
-/// Recrée dblaadmin en préservant les paiements (dernière date de paiement).
+/// Recrée dbapadmin en préservant les paiements (dernière date de paiement).
 /// À appeler quand le déchiffrement échoue (clé incorrecte).
 /// Prend la connexion en entrée pour le backup, retourne une nouvelle connexion.
 pub async fn recreate_admin_preserving_payments(conn: AnyConnection) -> Result<AnyConnection, String> {
@@ -251,7 +251,7 @@ pub async fn recreate_admin_preserving_payments(conn: AnyConnection) -> Result<A
     Ok(new_conn)
 }
 
-/// Supprime uniquement dblaadmin.db et le fichier schéma associé.
+/// Supprime uniquement dbapadmin.db et le fichier schéma associé.
 /// Utilisé quand la base admin semble corrompue pour la recréer de zéro.
 pub fn delete_admin_db_and_schema() {
     let admin_path = admin_db_path();
@@ -509,13 +509,13 @@ pub async fn get_db_config_from_admin(
     Ok(cfg)
 }
 
-/// Chemin du fichier admin (dblaadmin.db)
+/// Chemin du fichier admin (dbapadmin.db)
 pub fn admin_db_path() -> std::path::PathBuf {
     db::get_db_path("", "admin", None)
 }
 
 /// Ouvre une connexion à la base admin (SQLite).
-/// Si dblaadmin semble corrompu, le supprime et le recrée de zéro.
+/// Si dbapadmin semble corrompu, le supprime et le recrée de zéro.
 pub async fn connect_admin() -> Result<AnyConnection, String> {
     let path = admin_db_path();
     if let Some(parent) = path.parent() {
@@ -587,11 +587,11 @@ pub async fn connect_admin_fresh() -> Result<AnyConnection, String> {
 /// Chemin du fichier pour une base SQLite colorée (yellow, green, blue, etc.)
 fn sqlite_path_from_config(config: &DbConfig, color: &str) -> std::path::PathBuf {
     if config.path.is_empty() {
-        db::get_databases_dir().join(format!("dbla{}.db", color))
+        db::get_databases_dir().join(db::dbap_color_db_filename(color))
     } else {
         let p = Path::new(&config.path);
         if p.is_dir() {
-            p.join(format!("dbla{}.db", color))
+            p.join(db::dbap_color_db_filename(color))
         } else {
             p.to_path_buf()
         }
@@ -649,7 +649,7 @@ pub async fn connect_db_async(
 }
 
 /// Crée les tables admin (tab_trace, tab_task, tab_config, tab_admin, tab_tuto) - version SQLx
-/// Tables uniques pour tout le projet : dblaadmin = base centrale partagée par tous les utilisateurs.
+/// Tables uniques pour tout le projet : dbapadmin = base centrale partagée par tous les utilisateurs.
 pub async fn ensure_tables_admin_sqlx(
     conn: &mut AnyConnection,
     _pays: &str,
@@ -1054,7 +1054,8 @@ pub async fn ensure_tables_green_sqlx(conn: &mut AnyConnection, tab_id: &str) ->
                 id TEXT PRIMARY KEY, nom TEXT UNIQUE, pourcentage INTEGER, logg_id TEXT, date_creation DATETIME
             )"#,
         r#"CREATE TABLE IF NOT EXISTS tab_nom_materiel (
-                id TEXT PRIMARY KEY, nom TEXT UNIQUE, quantite_defaut INTEGER DEFAULT 0, prix_defaut INTEGER DEFAULT 0, logg_id TEXT, date_creation DATETIME
+                id TEXT PRIMARY KEY, nom TEXT UNIQUE, quantite_defaut INTEGER DEFAULT 0, prix_defaut INTEGER DEFAULT 0,
+                unite_stock TEXT DEFAULT 'unité', logg_id TEXT, date_creation DATETIME
             )"#,
         r#"CREATE TABLE IF NOT EXISTS tab_modele_etat (
                 id TEXT PRIMARY KEY,
@@ -1093,6 +1094,13 @@ pub async fn ensure_tables_green_sqlx(conn: &mut AnyConnection, tab_id: &str) ->
     let _ = sqlx::query::<Any>("CREATE INDEX IF NOT EXISTS idx_tab_privilege_logg ON tab_privilege(logg_id)")
         .execute(&mut *conn)
         .await;
+    let nm_table = "tab_nom_materiel";
+    let _ = sqlx::query::<Any>(&format!(
+        "ALTER TABLE {} ADD COLUMN unite_stock TEXT DEFAULT 'unité'",
+        nm_table
+    ))
+    .execute(&mut *conn)
+    .await;
     Ok(())
 }
 
@@ -1160,6 +1168,18 @@ pub async fn ensure_tables_blue_sqlx(conn: &mut AnyConnection, tab_id: &str) -> 
     let acte_table = "tab_acte";
     let _ = sqlx::query::<Any>(&format!(
         "ALTER TABLE {} ADD COLUMN posologie_id TEXT",
+        acte_table
+    ))
+    .execute(&mut *conn)
+    .await;
+    let _ = sqlx::query::<Any>(&format!(
+        "ALTER TABLE {} ADD COLUMN mouvement_type TEXT DEFAULT 'vente'",
+        acte_table
+    ))
+    .execute(&mut *conn)
+    .await;
+    let _ = sqlx::query::<Any>(&format!(
+        "ALTER TABLE {} ADD COLUMN quantite INTEGER DEFAULT 1",
         acte_table
     ))
     .execute(&mut *conn)

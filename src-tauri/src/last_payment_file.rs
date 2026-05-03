@@ -1,5 +1,5 @@
 //! Fichier chiffré contenant la dernière date de paiement (backup durable).
-//! Utilisé quand dblaadmin est corrompu ou absent.
+//! Utilisé quand dbapadmin est corrompu ou absent.
 
 use std::fs;
 use std::path::PathBuf;

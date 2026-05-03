@@ -1,0 +1,30 @@
+[UML unique du projet - gestion de stock / LoggAppro]
+
+[Fichiers SQLite (dossier LoggAppro/databases ou ./databases)]
+  dbap.db              — catalogue (tab_pays, tab_env, …) ; anciennement dbla.db
+  dbapyellow.db …      — bases « couleur » ; anciennement dbla*.db
+  dbapadmin.db         — admin / tab_config ; anciennement dblaadmin.db
+  dbap_stock.db        — module stock : stock_article, stock_movement (+ supplier_name, client_name), stock_party (fournisseurs/clients pour listes)
+
+[Frontend]
+  index.html #opening-splash : logo opening-logo.png + titre (pages.opening[0]) ; hide sur loggappro-ready ou timeout
+  PageConnection -> SessionContext (sessionStorage)
+  App (HashRouter)
+    /connection -> PageConnection
+    /stock (ProtectedRoute)
+      StockLayout (Sider + Outlet)
+        /stock -> StockDashboard  : stock_dashboard_stats, stock_list_*
+        /stock/articles         : stock_list_articles, stock_upsert_article, stock_delete_article
+        /stock/movements        : stock_list_movements, stock_add_movement
+      StockDbSettingsModal     : stock_test_remote_db
+  AntdThemeBridge : ConfigProvider + theme <- themes[themeNumber]
+  ThemeCssSync     : CSS variables --primary, --secondary, ... sur <html>
+
+[Backend Tauri / Rust]
+  migrate_legacy_dbla_to_dbap_filenames (premier accès get_databases_dir) : renommage one-shot des anciens fichiers
+  ensure_default_demo_docteur : exige sadminLogin + sadminPassword (sadmin + mot de passe du jour) — seul le sadmin peut amorcer un compte utilisateur (démo)
+  Commandes stock_* -> dbap_stock.db ; auth -> dbapyellow etc.
+  Commandes: stock_*, chiffrement payload (même clé que le reste)
+
+[Données texte UI]
+  src/constants/json/Pages.constant.json (pages.opening, connection, stockMenu, stockDashboard, ...)

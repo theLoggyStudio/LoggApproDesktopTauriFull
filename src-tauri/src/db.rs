@@ -1,16 +1,27 @@
-//! Gestion multi-bases SQLite (dblayellow, dblagreen, dblablue, etc.)
+//! Gestion multi-bases SQLite (fichiers `dbapyellow.db`, `dbapgreen.db`, etc.)
 
 use regex::Regex;
 use rusqlite::Connection;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Once;
 
 #[allow(dead_code)]
 const DB_COLORS: [&str; 6] = ["yellow", "green", "pink", "blue", "orange", "admin"];
 
-/// Chemin de base pour les bases de données
-/// Crée le répertoire si nécessaire pour éviter SQLITE_CANTOPEN (code 14)
-pub fn get_databases_dir() -> PathBuf {
+/// Catalogue principal (`tab_pays`, `tab_env`, …).
+pub const DBAP_CATALOG_FILE: &str = "dbap.db";
+/// Base dédiée au module gestion de stock.
+pub const DBAP_STOCK_FILE: &str = "dbap_stock.db";
+
+static LEGACY_DBLA_TO_DBAP: Once = Once::new();
+
+/// Nom du fichier SQLite pour une couleur logique (yellow, green, …, admin).
+pub fn dbap_color_db_filename(color: &str) -> String {
+    format!("dbap{}.db", color)
+}
+
+fn resolve_databases_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         let pd = std::env::var("ProgramData").ok();
@@ -33,8 +44,64 @@ pub fn get_databases_dir() -> PathBuf {
     path
 }
 
-/// Chemin vers un fichier DB (dblayellow.db, etc.)
-/// - color "admin" : bootstrap via get_databases_dir (seul chemin "fixe" pour localiser dblaadmin)
+fn sqlite_has_stock_article_table(db_path: &Path) -> bool {
+    if !db_path.exists() {
+        return false;
+    }
+    let Ok(conn) = Connection::open(db_path) else {
+        return false;
+    };
+    conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='stock_article' LIMIT 1",
+        [],
+        |_| Ok(1),
+    )
+    .is_ok()
+}
+
+/// Renomme une seule fois les anciens `dbla*.db` / `stock_management.db` vers les noms `dbap*`.
+pub fn migrate_legacy_dbla_to_dbap_filenames(dir: &Path) {
+    let try_ren = |from: &str, to: &str| {
+        let a = dir.join(from);
+        let b = dir.join(to);
+        if a.exists() && !b.exists() {
+            let _ = fs::rename(&a, &b);
+        }
+    };
+
+    try_ren("stock_management.db", DBAP_STOCK_FILE);
+
+    let catalog_path = dir.join(DBAP_CATALOG_FILE);
+    let old_main = dir.join("dbla.db");
+    let stock_path = dir.join(DBAP_STOCK_FILE);
+
+    if catalog_path.exists() && old_main.exists() && !stock_path.exists() {
+        let _ = fs::rename(&catalog_path, &stock_path);
+    } else if catalog_path.exists()
+        && !old_main.exists()
+        && !stock_path.exists()
+        && sqlite_has_stock_article_table(&catalog_path)
+    {
+        let _ = fs::rename(&catalog_path, &stock_path);
+    }
+
+    try_ren("dbla.db", DBAP_CATALOG_FILE);
+
+    for c in DB_COLORS {
+        try_ren(&format!("dbla{}.db", c), &dbap_color_db_filename(c));
+    }
+}
+
+/// Chemin de base pour les bases de données
+/// Crée le répertoire si nécessaire pour éviter SQLITE_CANTOPEN (code 14)
+pub fn get_databases_dir() -> PathBuf {
+    let path = resolve_databases_dir();
+    LEGACY_DBLA_TO_DBAP.call_once(|| migrate_legacy_dbla_to_dbap_filenames(&path));
+    path
+}
+
+/// Chemin vers un fichier DB (`dbapyellow.db`, etc.)
+/// - color "admin" : bootstrap via get_databases_dir (seul chemin "fixe" pour localiser dbapadmin)
 /// - autres couleurs : base_override OBLIGATOIRE depuis tab_config (pas de chemin en dur)
 pub fn get_db_path(_pays: &str, color: &str, base_override: Option<&str>) -> PathBuf {
     let dir = if color == "admin" {
@@ -52,22 +119,22 @@ pub fn get_db_path(_pays: &str, color: &str, base_override: Option<&str>) -> Pat
     if !dir.exists() {
         let _ = fs::create_dir_all(&dir);
     }
-    let db_name = format!("dbla{}.db", color);
+    let db_name = dbap_color_db_filename(color);
     dir.join(db_name)
 }
 
-/// Chemin vers dbla.db (tab_pays, tab_env)
+/// Chemin vers `dbap.db` (tab_pays, tab_env)
 #[allow(dead_code)]
-pub fn get_dbla_main_path() -> PathBuf {
+pub fn get_dbap_catalog_path() -> PathBuf {
     let dir = get_databases_dir();
     if !dir.exists() {
         let _ = fs::create_dir_all(&dir);
     }
-    dir.join("dbla.db")
+    dir.join(DBAP_CATALOG_FILE)
 }
 
 /// Ouvre une connexion à une base (PRAGMA optimisés)
-/// base_override: chemin personnalisé pour dblayellow, dblagreen, etc. (ignoré pour admin)
+/// base_override: chemin personnalisé pour dbapyellow, dbapgreen, etc. (ignoré pour admin)
 #[allow(dead_code)]
 pub fn connect(pays: &str, color: &str, base_override: Option<&str>) -> Result<Connection, String> {
     let path = get_db_path(pays, color, base_override);
@@ -84,11 +151,11 @@ pub fn connect(pays: &str, color: &str, base_override: Option<&str>) -> Result<C
     Ok(conn)
 }
 
-/// Ouvre la base principale dbla.db
+/// Ouvre la base catalogue `dbap.db`
 #[allow(dead_code)]
 pub fn connect_main() -> Result<Connection, String> {
-    let path = get_dbla_main_path();
-    let conn = Connection::open(&path).map_err(|e| format!("Ouverture dbla: {}", e))?;
+    let path = get_dbap_catalog_path();
+    let conn = Connection::open(&path).map_err(|e| format!("Ouverture dbap catalogue: {}", e))?;
     conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")
         .map_err(|e| format!("PRAGMA: {}", e))?;
     Ok(conn)
@@ -348,7 +415,8 @@ pub fn ensure_tables_green(pays: &str, tab_id: &str) -> Result<(), String> {
             )"#
         .to_string(),
         r#"CREATE TABLE IF NOT EXISTS tab_nom_materiel (
-                id TEXT PRIMARY KEY, nom TEXT UNIQUE, quantite_defaut INTEGER DEFAULT 0, prix_defaut INTEGER DEFAULT 0, logg_id TEXT, date_creation DATETIME
+                id TEXT PRIMARY KEY, nom TEXT UNIQUE, quantite_defaut INTEGER DEFAULT 0, prix_defaut INTEGER DEFAULT 0,
+                unite_stock TEXT DEFAULT 'unité', logg_id TEXT, date_creation DATETIME
             )"#
         .to_string(),
         r#"CREATE TABLE IF NOT EXISTS tab_modele_etat (
@@ -403,6 +471,24 @@ pub fn ensure_tables_green(pays: &str, tab_id: &str) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_tab_privilege_logg ON tab_privilege(logg_id);",
         [],
     );
+
+    let nm_table = "tab_nom_materiel";
+    let has_unite_stock = conn
+        .prepare(&format!("PRAGMA table_info({})", nm_table))
+        .and_then(|mut stmt| {
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            Ok(rows.filter_map(|r| r.ok()).any(|c| c == "unite_stock"))
+        })
+        .unwrap_or(false);
+    if !has_unite_stock {
+        let _ = conn.execute(
+            &format!(
+                "ALTER TABLE {} ADD COLUMN unite_stock TEXT DEFAULT 'unité';",
+                nm_table
+            ),
+            [],
+        );
+    }
 
     Ok(())
 }
@@ -591,7 +677,7 @@ pub fn ensure_tables_admin(pays: &str, tab_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Lit le chemin d'une base depuis tab_config (dblaadmin).
+/// Lit le chemin d'une base depuis tab_config (dbapadmin).
 /// Utilise uniquement les chemins enregistrés, pas de chemin en dur.
 /// Vide = même dossier que db_path (admin).
 #[allow(dead_code)]
@@ -612,7 +698,7 @@ pub fn get_db_path_from_config(pays: &str, tab_id: &str, color: &str) -> Result<
             return Ok(v);
         }
     }
-    Err(format!("Aucun chemin enregistré pour db_path ou db_path_{}. Configurez dans dblaadmin.", color))
+    Err(format!("Aucun chemin enregistré pour db_path ou db_path_{}. Configurez dans dbapadmin.", color))
 }
 
 /// Pays par défaut si non fourni

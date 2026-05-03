@@ -1,91 +1,80 @@
-import { HashRouter as Router, Route, Routes, Navigate, useParams } from "react-router-dom";
-import { ThemeProvider } from "react-bootstrap";
-import Footer from "./body/Modules/Footer";
-import { Alert } from "./body/Modules/Alert";
-import { ClearParamsOnConnectionPage } from "./body/components/ClearParamsOnConnectionPage";
-import ModalChangementMotDePasse from "./body/Modules/ModalChangementMotDePasse";
-import ModalChangementEmailDemoDocteur from "./body/Modules/ModalChangementEmailDemoDocteur";
-import ModalCorruptionDonnees from "./body/Modules/ModalCorruptionDonnees";
-import { useNavigationParams } from "./body/hooks/useNavigationParams";
+import { Suspense, lazy } from "react";
+import { HashRouter as Router, Route, Routes, Navigate } from "react-router-dom";
+import PageConnection from "./pages/PageConnection";
+import { WebBackendBanner } from "./components/WebBackendBanner";
+import { AppAlert } from "./components/AppAlert";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import { Loading } from "./items";
 
-// Import direct : les imports dynamiques (lazy) échouent avec le protocole tauri://
-import PageOuverture from "./body/Pages/PageOuverture";
-import PageScanQR from "./body/Pages/PageScanQR";
-import PageConnection from "./body/Pages/pages_connection/PageConnection";
-import PageProfil from "./body/Pages/page_profil/PageProfil";
-import PageParametre from "./body/Pages/page_parametre/PageParametre";
-import PageStatistique from "./body/Pages/page_statistique/PageStatistique";
-import PagePatientDetail from "./body/Pages/page_patient_detail/PagePatientDetail";
-import PageEtat from "./body/Pages/page_etat/PageEtat";
-import PopupRappel from "./body/Modules/PopupRappel";
-import { WebBackendBanner } from "./body/Modules/WebBackendBanner";
+const StockLayout = lazy(() => import("./body/Pages/stock/StockLayout"));
+const StockDashboard = lazy(() => import("./body/Pages/stock/StockDashboard"));
+const StockArticlesLayout = lazy(() => import("./body/Pages/stock/StockArticlesLayout"));
+const StockArticleList = lazy(() => import("./body/Pages/stock/StockArticleList"));
+const StockArticleUnits = lazy(() => import("./body/Pages/stock/StockArticleUnits"));
+const StockArticleCategories = lazy(() => import("./body/Pages/stock/StockArticleCategories"));
+const StockArticleLocations = lazy(() => import("./body/Pages/stock/StockArticleLocations"));
+const StockWarehouseLayout = lazy(() => import("./body/Pages/stock/StockWarehouseLayout"));
+const StockWarehouseRedirect = lazy(() => import("./body/Pages/stock/StockWarehouseRedirect"));
+const StockMovements = lazy(() => import("./body/Pages/stock/StockMovements"));
+const StockFournisseurs = lazy(() => import("./body/Pages/stock/StockFournisseurs"));
+const StockClients = lazy(() => import("./body/Pages/stock/StockClients"));
+const StockDocuments = lazy(() => import("./body/Pages/stock/StockDocuments"));
+const StockUserPage = lazy(() => import("./body/Pages/stock/StockUserPage"));
 
 const routerFutureFlags = { v7_startTransition: true, v7_relativeSplatPath: true };
 
-/** Ancienne URL avec userId/tabId/pays dans le chemin → `/patient-detail/:patientId` uniquement. */
-function LegacyPatientDetailRedirect() {
-  const { patientId } = useParams<{ patientId: string }>();
-  return <Navigate to={patientId ? `/patient-detail/${patientId}` : "/patient-detail"} replace />;
-}
-
 function AppContent() {
-  const { tabId } = useNavigationParams();
-  const isAdmin = tabId === 'admin';
   return (
     <>
-        <WebBackendBanner />
-        <ClearParamsOnConnectionPage />
-        <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ flex: 1 }}>
+      <WebBackendBanner />
+      <Suspense
+        fallback={
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "40vh" }}>
+            <Loading size="large" />
+          </div>
+        }
+      >
         <Routes>
-            <Route path="/" element={<PageOuverture />} />
-            <Route path="/scan" element={<PageScanQR />} />
-            <Route path="/nouveau-compte" element={<Navigate to="/connection" replace />} />
-            <Route path="/connection" element={<PageConnection />} />
-
-            {/* Routes avec params URL (compatibilité Web) */}
-            <Route path="/profil/:userId/:tabId/:pays" element={<PageProfil />} />
-            <Route path="/parametres/:userId/:tabId/:pays" element={<PageParametre />} />
-            <Route path="/statistique/:userId/:tabId/:pays" element={<PageStatistique />} />
-            <Route path="/etats/:userId/:tabId/:pays" element={<PageEtat />} />
-
-            {/* Ancienne URL liste patients → dossier unique */}
-            <Route path="/patient" element={<PagePatientDetail /> } />
-            <Route path="/patient/:userId/:tabId/:pays" element={<PagePatientDetail />} />
-
-            {/* Fiche patient : session pour userId/tabId/pays — URL = patientId seul si besoin */}
-            <Route path="/patient-detail/:patientId/:userId/:tabId/:pays" element={<LegacyPatientDetailRedirect />} />
-            <Route path="/patient-detail/:patientId" element={<PagePatientDetail />} />
-            <Route path="/patient-detail" element={<PagePatientDetail />} />
-
-            {/* Routes sans params (session/state) */}
-            <Route path="/profil" element={<PageProfil />} />
-            <Route path="/parametres" element={<PageParametre />} />
-            <Route path="/statistique" element={<PageStatistique />} />
-            <Route path="/etats" element={<PageEtat />} />
-            <Route path="*" element={<PageOuverture />} />
-          </Routes>
-        </div>
-
-        <Footer isAdmin={isAdmin}/>
-        </div>
-        <Alert />
-        <ModalChangementMotDePasse />
-        <ModalChangementEmailDemoDocteur />
-        <ModalCorruptionDonnees />
-        <PopupRappel />
+          <Route path="/connection" element={<PageConnection />} />
+          <Route
+            path="/stock"
+            element={
+              <ProtectedRoute>
+                <StockLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<StockDashboard />} />
+            <Route path="articles" element={<StockArticlesLayout />}>
+              <Route index element={<StockArticleList />} />
+              <Route path="units" element={<StockArticleUnits />} />
+              <Route path="categories" element={<StockArticleCategories />} />
+            </Route>
+            <Route path="warehouse">
+              <Route index element={<StockWarehouseRedirect />} />
+              <Route path=":warehouseId" element={<StockWarehouseLayout />}>
+                <Route index element={<StockArticleLocations />} />
+              </Route>
+            </Route>
+            <Route path="movements" element={<StockMovements />} />
+            <Route path="fournisseurs" element={<StockFournisseurs />} />
+            <Route path="clients" element={<StockClients />} />
+            <Route path="documents" element={<StockDocuments />} />
+            <Route path="user" element={<StockUserPage />} />
+          </Route>
+          <Route path="/" element={<Navigate to="/connection" replace />} />
+          <Route path="*" element={<Navigate to="/connection" replace />} />
+        </Routes>
+      </Suspense>
+      <AppAlert />
     </>
   );
 }
 
-function App() {
+export default function App() {
   return (
-    <ThemeProvider>
-      <Router future={routerFutureFlags}>
-        <AppContent />
-      </Router>
-    </ThemeProvider>
+    <Router future={routerFutureFlags}>
+      <AppContent />
+    </Router>
   );
 }
-
-export default App;

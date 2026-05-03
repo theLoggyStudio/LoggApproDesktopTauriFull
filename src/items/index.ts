@@ -1,8 +1,11 @@
-/**
- * Baril `src/items` : composants UI réutilisables (une responsabilité par fichier, cf. `.cursorrules`).
- */
+export { Input } from "./Input.tsx";
+export { Select } from "./Select.tsx";
+export { Table } from "./Table.tsx";
 export { Modal } from "./Modal.tsx";
-export { Table, EmptyTables } from "./Table.tsx";
+export { Button } from "./Button.tsx";
 export { Loading } from "./Loading.tsx";
 export { Alert } from "./Alert.tsx";
-export { Input } from "./Input.tsx";
+export { Text } from "./Text.tsx";
+export { Panel } from "./Panel.tsx";
+export { Offcanvas } from "./Offcanvas.tsx";
+export { NavBar } from "./NavBar.tsx";

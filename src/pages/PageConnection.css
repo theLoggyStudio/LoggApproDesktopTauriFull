@@ -1,0 +1,197 @@
+/* Panneau marque + fluide animé (connexion) */
+.connection-brand-inner {
+  position: relative;
+  isolation: isolate;
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(1.5rem, 4vw, 3rem);
+  overflow: hidden;
+  background: var(--conn-primary, #15803d);
+}
+
+.connection-fluid-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.connection-fluid-mesh {
+  position: absolute;
+  inset: -20%;
+  opacity: 0.55;
+  background:
+    radial-gradient(ellipse 80% 60% at 30% 25%, var(--conn-fluid-highlight, rgba(255, 255, 255, 0.28)) 0%, transparent 55%),
+    radial-gradient(ellipse 70% 50% at 75% 70%, var(--conn-fluid-accent, rgba(255, 255, 255, 0.12)) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 45% at 15% 85%, var(--conn-fluid-glow, rgba(144, 224, 239, 0.18)) 0%, transparent 45%);
+  animation: connectionMeshDrift 28s ease-in-out infinite alternate;
+}
+
+.connection-fluid-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(72px);
+  opacity: 0.55;
+  mix-blend-mode: soft-light;
+}
+
+.connection-fluid-blob--a {
+  width: min(120vw, 520px);
+  height: min(120vw, 520px);
+  left: -25%;
+  top: -10%;
+  background: var(--conn-blob-a, rgba(255, 255, 255, 0.35));
+  animation: connectionBlobA 22s ease-in-out infinite;
+}
+
+.connection-fluid-blob--b {
+  width: min(100vw, 440px);
+  height: min(100vw, 440px);
+  right: -20%;
+  bottom: 5%;
+  background: var(--conn-blob-b, rgba(220, 252, 231, 0.4));
+  animation: connectionBlobB 26s ease-in-out infinite;
+}
+
+.connection-fluid-blob--c {
+  width: min(90vw, 380px);
+  height: min(90vw, 380px);
+  left: 20%;
+  bottom: -15%;
+  background: var(--conn-blob-c, rgba(144, 224, 239, 0.25));
+  animation: connectionBlobC 20s ease-in-out infinite;
+  animation-delay: -6s;
+}
+
+.connection-fluid-shimmer {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    125deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.06) 42%,
+    rgba(255, 255, 255, 0.12) 50%,
+    rgba(255, 255, 255, 0.06) 58%,
+    transparent 100%
+  );
+  background-size: 200% 200%;
+  animation: connectionShimmer 18s linear infinite;
+  opacity: 0.85;
+}
+
+@keyframes connectionMeshDrift {
+  0% {
+    transform: translate(0, 0) rotate(0deg) scale(1);
+    opacity: 0.5;
+  }
+  100% {
+    transform: translate(-4%, 3%) rotate(3deg) scale(1.08);
+    opacity: 0.65;
+  }
+}
+
+@keyframes connectionBlobA {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  40% {
+    transform: translate(12%, 8%) scale(1.12);
+  }
+  70% {
+    transform: translate(4%, -6%) scale(0.96);
+  }
+}
+
+@keyframes connectionBlobB {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1.05);
+  }
+  50% {
+    transform: translate(-14%, -10%) scale(1);
+  }
+}
+
+@keyframes connectionBlobC {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(18%, 12%) scale(1.08);
+  }
+  66% {
+    transform: translate(-8%, 6%) scale(0.92);
+  }
+}
+
+@keyframes connectionShimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.connection-brand-front {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.75rem;
+  max-width: 320px;
+}
+
+.connection-brand-logo {
+  width: min(160px, 42vw);
+  height: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 8px 28px rgba(0, 0, 0, 0.2));
+}
+
+.connection-app-title {
+  margin: 0 !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.04em;
+  color: var(--conn-text, #fff) !important;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.15);
+}
+
+/* Mobile : bandeau marque plus compact */
+.connection-brand-wrap {
+  flex-shrink: 0;
+}
+
+@media (max-width: 767px) {
+  .connection-brand-inner {
+    min-height: 42vh;
+    padding: 1.75rem 1.25rem;
+  }
+
+  .connection-brand-logo {
+    width: min(120px, 36vw);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connection-fluid-mesh,
+  .connection-fluid-blob,
+  .connection-fluid-shimmer {
+    animation: none !important;
+  }
+
+  .connection-fluid-mesh {
+    opacity: 0.4;
+  }
+
+  .connection-fluid-blob {
+    filter: blur(48px);
+  }
+}

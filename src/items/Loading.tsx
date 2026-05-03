@@ -1,5 +1,7 @@
-/**
- * Point d’entrée canonique pour l’état de chargement async (voir `.cursorrules`).
- * Implémentation : `body/Modules/Loading`.
- */
-export { default as Loading } from "../body/Modules/Loading.tsx";
+import { Spin } from "antd";
+import type { SpinProps } from "antd";
+
+/** Indicateur de chargement — enveloppe `Spin` Ant Design. */
+export function Loading(props: SpinProps) {
+  return <Spin {...props} />;
+}
