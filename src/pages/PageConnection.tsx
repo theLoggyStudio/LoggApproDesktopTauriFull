@@ -118,6 +118,8 @@ export default function PageConnection() {
             loginOrLabel: stockUser.loginOrLabel ?? email,
             role: stockUser.role ?? "stock_user",
             stockPrivileges: stockUser.stockPrivileges ?? [],
+            address: stockUser.address?.trim() || undefined,
+            stockRoleId: stockUser.stockRoleId?.trim() || undefined,
           });
           setAlertObj({ type: "success", text: T[11], show: true });
           navigate(getFirstStockPath(stockUser.stockPrivileges ?? []));

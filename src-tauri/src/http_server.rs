@@ -59,6 +59,8 @@ async fn invoke_handler(Json(req): Json<InvokeRequest>) -> impl IntoResponse {
         "stock_upsert_party" => crate::stock_commands::stock_upsert_party(payload_str).await,
         "stock_delete_party" => crate::stock_commands::stock_delete_party(payload_str).await,
         "stock_test_remote_db" => crate::stock_commands::stock_test_remote_db(payload_str).await,
+        "stock_get_remote_db_settings" => crate::stock_commands::stock_get_remote_db_settings(payload_str).await,
+        "stock_save_remote_db_settings" => crate::stock_commands::stock_save_remote_db_settings(payload_str).await,
         "stock_app_user_login" => crate::stock_commands::stock_app_user_login(payload_str).await,
         "stock_list_app_users" => crate::stock_commands::stock_list_app_users(payload_str).await,
         "stock_upsert_app_user" => crate::stock_commands::stock_upsert_app_user(payload_str).await,
@@ -70,6 +72,33 @@ async fn invoke_handler(Json(req): Json<InvokeRequest>) -> impl IntoResponse {
         "stock_import_document" => crate::stock_commands::stock_import_document(payload_str).await,
         "stock_export_document" => crate::stock_commands::stock_export_document(payload_str).await,
         "stock_delete_document" => crate::stock_commands::stock_delete_document(payload_str).await,
+        "stock_list_document_print_models" => crate::stock_commands::stock_list_document_print_models(payload_str).await,
+        "stock_get_document_print_model" => crate::stock_commands::stock_get_document_print_model(payload_str).await,
+        "stock_upsert_document_print_model" => crate::stock_commands::stock_upsert_document_print_model(payload_str).await,
+        "stock_delete_document_print_model" => crate::stock_commands::stock_delete_document_print_model(payload_str).await,
+        "stock_get_document_print_screen_bindings" => {
+            crate::stock_commands::stock_get_document_print_screen_bindings(payload_str).await
+        },
+        "stock_set_document_print_screen_binding" => {
+            crate::stock_commands::stock_set_document_print_screen_binding(payload_str).await
+        },
+        "stock_list_roles" => crate::stock_commands::stock_list_roles(payload_str).await,
+        "stock_upsert_role" => crate::stock_commands::stock_upsert_role(payload_str).await,
+        "stock_delete_role" => crate::stock_commands::stock_delete_role(payload_str).await,
+        "stock_list_circuits" => crate::stock_commands::stock_list_circuits(payload_str).await,
+        "stock_get_circuit" => crate::stock_commands::stock_get_circuit(payload_str).await,
+        "stock_upsert_circuit" => crate::stock_commands::stock_upsert_circuit(payload_str).await,
+        "stock_delete_circuit" => crate::stock_commands::stock_delete_circuit(payload_str).await,
+        "stock_list_collab_tasks" => crate::stock_commands::stock_list_collab_tasks(payload_str).await,
+        "stock_upsert_collab_task" => crate::stock_commands::stock_upsert_collab_task(payload_str).await,
+        "stock_complete_collab_task" => crate::stock_commands::stock_complete_collab_task(payload_str).await,
+        "stock_create_circuit_step_collab_task" => {
+            crate::stock_commands::stock_create_circuit_step_collab_task(payload_str).await
+        },
+        "stock_list_form_templates" => crate::stock_commands::stock_list_form_templates(payload_str).await,
+        "stock_get_form_template" => crate::stock_commands::stock_get_form_template(payload_str).await,
+        "stock_upsert_form_template" => crate::stock_commands::stock_upsert_form_template(payload_str).await,
+        "stock_delete_form_template" => crate::stock_commands::stock_delete_form_template(payload_str).await,
         _ => {
             return (
                 StatusCode::BAD_REQUEST,

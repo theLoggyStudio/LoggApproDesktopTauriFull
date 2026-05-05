@@ -32,12 +32,23 @@
       "Fournisseurs",
       "Clients",
       "Documents",
-      "Mon compte",
+      "Circuits",
+      "Collaborateur",
       "Paramètres base de données",
       "Stock",
       "Déconnexion",
       "Thème",
       "Choisir la couleur de l’interface"
+    ],
+    "stockCollaborateurNav": [
+      "Profil",
+      "Rôles"
+    ],
+    "stockCircuitsNav": [
+      "Liste des circuits",
+      "Créer un circuit",
+      "Formulaires",
+      "Remplir un formulaire"
     ],
     "stockDashboard": [
       "Vue d'ensemble de votre stock",
@@ -57,7 +68,10 @@
       "Actualiser",
       "Tiers",
       "Mouvements sur 14 jours",
-      "Stocks par catégorie (quantités)"
+      "Stocks par catégorie (quantités)",
+      "Imprimer : derniers mouvements",
+      "Imprimer : stocks par catégorie",
+      "Imprimer"
     ],
     "stockDataIo": [
       "Importer (CSV)",
@@ -90,16 +104,21 @@
       "Notes",
       "Quantité initiale / actuelle",
       "Enregistrement effectué.",
-      "Suppression effectuée."
+      "Suppression effectuée.",
+      "Prix unit.",
+      "Imprimer : articles",
+      "Devise"
     ],
     "stockArticlesNav": [
       "Liste des articles",
       "Unités",
       "Catégories",
+      "Devises",
       "Liste, recherche et fiche article.",
       "Les choix d'unité proviennent de l'onglet « Unités ».",
       "Les emplacements se gèrent par entrepôt (menu « Entrepôt ») ; la liste sur la fiche article indique l'entrepôt.",
       "Les catégories se gèrent dans l'onglet « Catégories ».",
+      "Les devises se gèrent dans l'onglet « Devises » (libellé affiché sur la fiche article, ex. EUR).",
       "Sous-écran"
     ],
     "stockWarehouseNav": [
@@ -117,7 +136,8 @@
       "Entrepôt enregistré.",
       "Libellé requis.",
       "Créez d'abord un entrepôt (menu « Entrepôt »), puis réessayez.",
-      "Aucun entrepôt : utilisez le bouton « Nouvel entrepôt » pour en ajouter un."
+      "Aucun entrepôt : utilisez le bouton « Nouvel entrepôt » pour en ajouter un.",
+      "Imprimer : entrepôts"
     ],
     "stockArticleUnits": [
       "Unités de mesure",
@@ -132,7 +152,8 @@
       "Aucune unité pour le moment.",
       "Enregistrement effectué.",
       "Libellé requis.",
-      "Suppression effectuée."
+      "Suppression effectuée.",
+      "Imprimer : unités"
     ],
     "stockArticleLocations": [
       "Emplacements",
@@ -149,7 +170,17 @@
       "Libellé requis.",
       "Suppression effectuée.",
       "Saisie d'un emplacement (nouveau ou ligne du tableau ci-dessous).",
-      "Vous n'avez pas l'autorisation de consulter ou de gérer les emplacements."
+      "Vous n'avez pas l'autorisation de consulter ou de gérer les emplacements.",
+      "Frais de logement (facultatif)",
+      "Montant des frais",
+      "Type de paiement",
+      "(Aucune périodicité)",
+      "Mensuel",
+      "Trimestriel",
+      "Semestriel",
+      "Annuel",
+      "Paiement ponctuel",
+      "Imprimer : emplacements"
     ],
     "stockArticleCategories": [
       "Catégories d'articles",
@@ -164,7 +195,24 @@
       "Aucune catégorie pour le moment.",
       "Enregistrement effectué.",
       "Libellé requis.",
-      "Suppression effectuée."
+      "Suppression effectuée.",
+      "Imprimer : catégories"
+    ],
+    "stockArticleCurrencies": [
+      "Devises",
+      "Définissez les devises proposées sur les articles (ex. euro, dollar, franc CFA). Le libellé correspond à la valeur enregistrée sur l'article.",
+      "Ajouter une devise",
+      "Libellé",
+      "Code (facultatif)",
+      "Enregistrer",
+      "Annuler",
+      "Supprimer",
+      "Confirmer la suppression ?",
+      "Aucune devise pour le moment.",
+      "Enregistrement effectué.",
+      "Libellé requis.",
+      "Suppression effectuée.",
+      "Imprimer : devises"
     ],
     "stockSelectCreateRow": [
       "+ Créer une unité de mesure…",
@@ -191,7 +239,12 @@
       "Libellé de l’article",
       "Catégorie (facultatif)",
       "+ Créer une catégorie d'article…",
-      "Création rapide — catégorie"
+      "Création rapide — catégorie",
+      "+ Créer une devise…",
+      "Création rapide — devise",
+      "Devise enregistrée.",
+      "+ Créer un rôle…",
+      "Création rapide — rôle"
     ],
     "stockMovements": [
       "Mouvements de stock",
@@ -221,7 +274,13 @@
       "Reçus",
       "Ajouter une image de reçu",
       "Aucune image de reçu pour ce mouvement.",
-      "Vous n'avez pas le droit d'importer ce format pour un reçu."
+      "Vous n'avez pas le droit d'importer ce format pour un reçu.",
+      "Imprimer : mouvements",
+      "Prix entrée (unit.)",
+      "Prix sortie (unit.)",
+      "Articles du mouvement",
+      "Ajouter un article",
+      "Date et heure du mouvement"
     ],
     "stockSettingsDb": [
       "Connexion base distante",
@@ -232,8 +291,16 @@
       "Mot de passe",
       "Tester la connexion",
       "Fermer",
-      "La base locale SQLite est créée automatiquement au premier usage.",
-      "Test envoyé"
+      "La base locale SQLite (stock) est créée automatiquement. Les paramètres ci-dessous sont enregistrés sur cet appareil pour une connexion MySQL/MariaDB ou PostgreSQL distante (test uniquement pour l’instant).",
+      "Connexion testée.",
+      "Type de serveur",
+      "Schéma PostgreSQL (optionnel)",
+      "Connexion SSL/TLS",
+      "Paramètres supplémentaires (fragment URL après « ? », sans le « ? » initial ; ex. charset=utf8mb4 ou application_name=LoggAppro)",
+      "Enregistrer les paramètres",
+      "Paramètres enregistrés.",
+      "MySQL / MariaDB",
+      "PostgreSQL"
     ],
     "stockArticleForm": [
       "SKU",
@@ -243,7 +310,9 @@
       "Quantité en stock",
       "Seuil minimum",
       "Emplacement",
-      "Notes"
+      "Notes",
+      "Prix unitaire",
+      "Devise"
     ],
     "stockFournisseurs": [
       "Fournisseurs",
@@ -258,7 +327,9 @@
       "Nom enregistré.",
       "Nom requis.",
       "Adresse",
-      "L'adresse est obligatoire pour un fournisseur."
+      "L'adresse est obligatoire pour un fournisseur.",
+      "Créé le",
+      "Imprimer : fournisseurs"
     ],
     "stockClients": [
       "Clients",
@@ -273,7 +344,17 @@
       "Nom enregistré.",
       "Nom requis.",
       "Adresse",
-      "L'adresse est obligatoire pour un client."
+      "L'adresse est obligatoire pour un client.",
+      "Créé le",
+      "Imprimer : clients"
+    ],
+    "stockCommon": [
+      "Dupliquer",
+      " (copie)"
+    ],
+    "stockDocumentsNav": [
+      "Fichiers importés",
+      "Modèles d'impression"
     ],
     "stockDocuments": [
       "Documents",
@@ -305,20 +386,52 @@
       "Aperçu du document PDF",
       "Fermer",
       "Lien mouvement (non modifiable)",
-      "Vous n’avez pas le droit de consulter la liste des documents."
+      "Vous n’avez pas le droit de consulter la liste des documents.",
+      "Imprimer : liste des documents"
+    ],
+    "stockDocumentPrintModels": [
+      "Modèles d'impression HTML/CSS",
+      "Éditez du HTML et du CSS avec des variables {{ cle }}. Tapez {{ dans un champ : une liste contextuelle filtre les variables disponibles. Renseignez les valeurs à droite pour l’aperçu et l’impression.",
+      "Nouveau modèle",
+      "Modifier",
+      "Nom du modèle",
+      "Description",
+      "HTML",
+      "CSS",
+      "Aperçu en direct",
+      "Valeurs pour l’aperçu et l’impression",
+      "Supprimer",
+      "Enregistrer",
+      "Modèle enregistré.",
+      "Suppression effectuée.",
+      "Nom requis.",
+      "Aucun modèle pour le moment.",
+      "Imprimer",
+      "Retour à la liste",
+      "Écran (impression des listes)",
+      "— Par défaut (tableau simple) —",
+      "Mouvements de stock",
+      "Articles",
+      "Documents",
+      "Tiers",
+      "Références",
+      "Entrepôt",
+      "Tableau de bord — mouvements récents",
+      "Tableau de bord — stocks par catégorie"
     ],
     "stockUser": [
-      "Mon compte",
+      "Collaborateur",
       "Vue d'ensemble de l'utilisateur connecté à l'application stock.",
       "Identifiant / connexion",
       "Rôle",
       "Référence interne",
       "Aucun rôle",
-      "Pour vous connecter avec un autre compte, utilisez le bouton de déconnexion dans la barre supérieure."
+      "Pour vous connecter avec un autre compte, utilisez le bouton de déconnexion dans la barre supérieure.",
+      "Adresse"
     ],
     "stockUserAdmin": [
       "Gestion des utilisateurs locaux",
-      "Créez des comptes avec un mot de passe par défaut et des droits par écran. Réservé au super-administrateur (sadmin).",
+      "Créez des comptes avec un mot de passe par défaut ; les droits effectifs viennent du rôle assigné (éditables dans « Rôles collaborateurs »). Réservé au super-administrateur (sadmin).",
       "Nouvel utilisateur",
       "Identifiant de connexion",
       "Nom affiché",
@@ -339,7 +452,7 @@
       "Paramètres base de données",
       "Modifier",
       "Mot de passe par défaut attribué :",
-      "Mon compte",
+      "Collaborateur",
       "Mot de passe par défaut pour les nouveaux comptes (si le champ mot de passe est vide)",
       "Laisser vide pour conserver le mot de passe actuel.",
       "Sélectionnez au moins un accès.",
@@ -384,16 +497,136 @@
       "Emplacements — import et export CSV et gestion des lieux de stockage",
       "Catégories d’articles — import et export CSV",
       "Documents — droits par format (fichiers)",
-      "Tout cocher / tout décocher ce groupe"
+      "Tout cocher / tout décocher ce groupe",
+      "Import devises articles (CSV)",
+      "Export devises articles (CSV)",
+      "Devises — import et export CSV",
+      "Vue Circuits",
+      "Vue Rôles collaborateurs",
+      "Gérer les circuits (création, modification, ordre des étapes)",
+      "Gérer les rôles (création, modification, suppression)",
+      "Circuits — droits",
+      "Rôles — droits",
+      "Les droits effectifs viennent du rôle assigné. Pour les modifier, ouvrez la page « Rôles collaborateurs »."
+    ],
+    "stockCircuits": [
+      "Circuits",
+      "Flux de formulaires enchaînés ; chaque étape indique quel rôle remplit le formulaire et quel rôle valide l’étape précédente pour débloquer la suivante.",
+      "Nouveau circuit",
+      "Nom du circuit",
+      "Description",
+      "Actif",
+      "Étapes du circuit",
+      "Étape",
+      "Titre du formulaire",
+      "Rôles autorisés à remplir ce formulaire",
+      "Rôle qui valide le formulaire précédent",
+      "— (première étape)",
+      "Champs du formulaire",
+      "Libellé du champ",
+      "Type",
+      "Obligatoire",
+      "Texte",
+      "Nombre",
+      "Date",
+      "Zone de texte",
+      "Ajouter un champ",
+      "Ajouter une étape",
+      "Monter",
+      "Descendre",
+      "Enregistrer le circuit",
+      "Annuler",
+      "Modifier",
+      "Supprimer",
+      "Aucun circuit pour le moment.",
+      "Circuit enregistré.",
+      "Nom requis.",
+      "Au moins une étape est requise.",
+      "Suppression effectuée.",
+      "Confirmer la suppression de ce circuit ?",
+      "Créer une tâche (rappels) pour le rôle « remplir » cette étape",
+      "Créer une tâche (rappels) pour le rôle « valider » l’étape précédente",
+      "Enregistrez le circuit pour pouvoir créer des tâches depuis cette page.",
+      "Article (sélection stock)",
+      "Bloc « mouvement de stock » : champs obligatoires en tête de chaque étape ; non supprimables.",
+      "Importer un modèle",
+      "Choisir un modèle à imbriquer",
+      "Champs importés.",
+      "Imprimer la structure des formulaires",
+      "Sélectionnez un modèle dans la liste."
+    ],
+    "stockFormTemplates": [
+      "Modèles de formulaires",
+      "Créez des jeux de champs réutilisables et imbriquez-les dans les étapes d’un circuit (bouton « Importer un modèle »). Le modèle « Mouvement de stock » est fourni par défaut et ne peut pas être supprimé.",
+      "Nouveau modèle",
+      "Modifier",
+      "Nom",
+      "Description",
+      "Champs",
+      "Enregistrer",
+      "Supprimer",
+      "Suppression effectuée.",
+      "Aucun modèle pour le moment.",
+      "Système",
+      "Consulter",
+      "Champs importés depuis le modèle choisi.",
+      "Nom requis.",
+      "Modèle enregistré.",
+      "Ce modèle est fourni par l’application ; les champs ne sont pas modifiables."
+    ],
+    "stockCircuitFill": [
+      "Remplir un formulaire",
+      "Ouvrez une tâche de remplissage ou de validation pour afficher le formulaire du circuit, puis marquez-la comme traitée.",
+      "Ouvrir"
+    ],
+    "stockCircuitTaskForm": [
+      "Remplir le formulaire",
+      "Valider l’étape",
+      "Imprimer",
+      "Enregistrer et marquer comme traité",
+      "Annuler",
+      "J’atteste avoir relu et validé le contenu affiché.",
+      "Cochez l’attestation pour valider.",
+      "Remplissez tous les champs obligatoires.",
+      "Tâche marquée comme traitée."
+    ],
+    "stockRoles": [
+      "Rôles collaborateurs",
+      "Définissez des rôles métier ; ils sont assignés aux comptes stock et utilisés dans les circuits (validation / remplissage).",
+      "Nouveau rôle",
+      "Libellé",
+      "Code (facultatif)",
+      "Description",
+      "Enregistrer",
+      "Annuler",
+      "Supprimer",
+      "Aucun rôle pour le moment.",
+      "Rôle enregistré.",
+      "Libellé requis.",
+      "Suppression effectuée.",
+      "Confirmer la suppression ?",
+      "Accès aux écrans",
+      "Ces droits s’appliquent à tous les collaborateurs assignés à ce rôle.",
+      "Modifier"
+    ],
+    "stockPrint": [
+      "Exporter en PDF",
+      "Liste à exporter",
+      "Ordre d'affichage",
+      "Croissant (anciennes dates ou plus petites quantités en premier)",
+      "Décroissant",
+      "Exporter en PDF",
+      "Annuler",
+      "Date"
     ],
     "stockScheduledTasks": [
       "Rappels planifiés",
-      "Ajoutez des tâches avec une date et une heure. Une notification système s'affichera à l'heure prévue (autorisez les notifications pour cette application).",
+      "Ajoutez des rappels date et heure (notification à l’échéance). Les articles dont la quantité atteint ou passe sous le seuil minimum apparaissent aussi ici : cochez « Fait » pour retirer une tâche de la liste (les articles sous seuil réapparaissent si vous les ignorez tant que le stock reste bas). Autorisez les notifications pour les rappels.",
       "Libellé de la tâche",
       "Date et heure",
       "Ajouter",
       "Supprimer",
-      "Aucun rappel planifié.",
+      "Aucune tâche en attente.",
       "Rappel LoggAppro",
       "Activer les notifications",
       "Les notifications sont désactivées ou refusées. Autorisez-les dans les paramètres du navigateur ou de Windows pour être alerté à l'heure prévue.",
@@ -403,7 +636,19 @@
       "Enregistrer les modifications",
       "Annuler l'édition",
       "Rappel mis à jour.",
-      "Supprimer ce rappel ?"
+      "Supprimer ce rappel ?",
+      "Fait",
+      "Stock bas",
+      "{name} ({sku}) — {qty} ≤ seuil min. {min} {unit}",
+      "Visibilité",
+      "Public — visible par tous les collaborateurs",
+      "Privée — visible uniquement par vous",
+      "Par rôle — visible uniquement par les collaborateurs ayant ce rôle",
+      "Rôle autorisé à voir la tâche",
+      "Sélectionnez un rôle.",
+      "Circuit — à valider",
+      "Circuit — à remplir",
+      "Description (facultatif)"
     ]
   }
 }

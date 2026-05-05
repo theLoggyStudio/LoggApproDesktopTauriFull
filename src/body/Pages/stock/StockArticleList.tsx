@@ -9,11 +9,12 @@ import {
   Typography,
 } from "antd";
 import { Button, Modal, Select, Table } from "../../../items";
-import { PlusOutlined, DeleteOutlined, SearchOutlined } from "@ant-design/icons";
+import { PlusOutlined, DeleteOutlined, SearchOutlined, PrinterOutlined, CopyOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { getPageTexts, usePageTexts } from "../../../hooks/usePageTexts";
 import { useSession } from "../../context/SessionContext";
 import {
+  canPrintStockArticleList,
   hasRefLocationCreate,
   hasRefLocationEdit,
   hasRefLocationView,
@@ -27,6 +28,9 @@ import {
   type StockArticle,
 } from "../../../lib/stockApi";
 import StockDataIoBar from "./StockDataIoBar";
+import { StockPrintModal } from "./StockPrintModal";
+import { buildPrintTableHtml, sortByIsoDate } from "../../utils/stockBrowserPrint";
+import { printStockListWithOptionalTemplate } from "../../utils/stockListPrintWithTemplate";
 
 const { Title } = Typography;
 
@@ -38,6 +42,7 @@ export default function StockArticleList() {
   const C = usePageTexts("stockSelectCreateRow");
   const unitRequiredMsg = getPageTexts("stockArticleUnits")[11];
   const catSavedMsg = getPageTexts("stockArticleCategories")[10];
+  const curSavedMsg = getPageTexts("stockSelectCreateRow")[27];
   const [rows, setRows] = useState<StockArticle[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
@@ -49,17 +54,23 @@ export default function StockArticleList() {
   const [locationOptions, setLocationOptions] = useState<{ value: string; label: string }[]>([]);
   const [defaultWarehouseId, setDefaultWarehouseId] = useState("");
   const [categoryOptions, setCategoryOptions] = useState<{ value: string; label: string }[]>([]);
+  const [currencyOptions, setCurrencyOptions] = useState<{ value: string; label: string }[]>([]);
   const [unitQuickOpen, setUnitQuickOpen] = useState(false);
   const [locationQuickOpen, setLocationQuickOpen] = useState(false);
   const [categoryQuickOpen, setCategoryQuickOpen] = useState(false);
+  const [currencyQuickOpen, setCurrencyQuickOpen] = useState(false);
+  const [printOpen, setPrintOpen] = useState(false);
   const [unitQuickForm] = Form.useForm<{ name: string; code?: string }>();
   const [locationQuickForm] = Form.useForm<{ name: string; code?: string }>();
   const [categoryQuickForm] = Form.useForm<{ name: string; code?: string }>();
+  const [currencyQuickForm] = Form.useForm<{ name: string; code?: string }>();
 
   const Wh = usePageTexts("stockWarehouseNav");
+  const Prt = usePageTexts("stockPrint");
   const canLocView = hasRefLocationView(session);
   const canLocCreate = hasRefLocationCreate(session);
   const canLocEdit = hasRefLocationEdit(session);
+  const canPrint = canPrintStockArticleList(session);
 
   const mergedCategoryOptions = useMemo(() => {
     const cat = editing?.category?.trim();
@@ -74,6 +85,13 @@ export default function StockArticleList() {
     if (locationOptions.some((o) => o.value === loc)) return locationOptions;
     return [...locationOptions, { value: loc, label: loc }];
   }, [locationOptions, editing?.location]);
+
+  const mergedCurrencyOptions = useMemo(() => {
+    const c = (editing?.currency ?? "").trim();
+    if (!c) return currencyOptions;
+    if (currencyOptions.some((o) => o.value === c)) return currencyOptions;
+    return [...currencyOptions, { value: c, label: c }];
+  }, [currencyOptions, editing?.currency]);
 
   const locationLabelByValue = useMemo(() => {
     const m: Record<string, string> = {};
@@ -112,6 +130,9 @@ export default function StockArticleList() {
     fetchRefItems("category").then((list) =>
       setCategoryOptions(list.map((x) => ({ value: x.name, label: x.code ? `${x.name} (${x.code})` : x.name }))),
     );
+    fetchRefItems("currency").then((list) =>
+      setCurrencyOptions(list.map((x) => ({ value: x.name, label: x.code ? `${x.name} (${x.code})` : x.name }))),
+    );
   }, [canLocView, canLocCreate]);
 
   const load = useCallback(() => {
@@ -143,19 +164,23 @@ export default function StockArticleList() {
           ...editing,
           qty: Number(editing.qty),
           minQty: Number(editing.minQty),
+          price: Number(editing.price ?? 0),
+          currency: (editing.currency ?? "").trim(),
         });
       } else {
         form.resetFields();
         form.setFieldsValue({
           qty: 0,
           minQty: 0,
+          price: 0,
           unit: unitOptions[0]?.value ?? "u",
           category: categoryOptions[0]?.value ?? "",
+          currency: "",
         });
       }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [modalOpen, editing?.id, editing, form, unitOptions, categoryOptions]);
+  }, [modalOpen, editing?.id, editing, form, unitOptions, categoryOptions, currencyOptions]);
 
   const openCreate = () => {
     setEditing(null);
@@ -165,6 +190,17 @@ export default function StockArticleList() {
   const openEdit = (r: StockArticle) => {
     setEditing(r);
     setModalOpen(true);
+  };
+
+  const duplicateArticleFromModal = () => {
+    const v = form.getFieldsValue() as Partial<StockArticle>;
+    const sfx = getPageTexts("stockCommon")[1] || "-COPIE";
+    const sku = (v.sku ?? "").trim();
+    form.setFieldsValue({
+      ...v,
+      sku: sku ? `${sku}${sfx}` : sku,
+    });
+    setEditing(null);
   };
 
   const onSave = async () => {
@@ -182,6 +218,8 @@ export default function StockArticleList() {
         name: v.name!.trim(),
         qty: Number(v.qty ?? 0),
         minQty: Number(v.minQty ?? 0),
+        price: Number(v.price ?? 0),
+        currency: (v.currency as string | undefined)?.trim() ?? "",
       });
       message.success(T[21] ?? "");
       setModalOpen(false);
@@ -216,6 +254,21 @@ export default function StockArticleList() {
       form.setFieldValue("category", v.name.trim());
       setCategoryQuickOpen(false);
       categoryQuickForm.resetFields();
+    } catch (e) {
+      message.error(String(e));
+    }
+  };
+
+  const onSaveQuickCurrency = async () => {
+    const v = await currencyQuickForm.validateFields().catch(() => null);
+    if (!v?.name?.trim()) return;
+    try {
+      await upsertRefItem("currency", { name: v.name.trim(), code: v.code?.trim() || "" });
+      message.success(curSavedMsg);
+      await loadRefs();
+      form.setFieldValue("currency", v.name.trim());
+      setCurrencyQuickOpen(false);
+      currencyQuickForm.resetFields();
     } catch (e) {
       message.error(String(e));
     }
@@ -292,6 +345,23 @@ export default function StockArticleList() {
         },
       },
       { title: T[8], dataIndex: "minQty", key: "minQty", width: 88 },
+      {
+        title: T[23],
+        dataIndex: "price",
+        key: "price",
+        width: 100,
+        align: "right",
+        render: (p: number) =>
+          Number(p ?? 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      },
+      {
+        title: T[25] ?? "Devise",
+        dataIndex: "currency",
+        key: "currency",
+        width: 88,
+        ellipsis: true,
+        render: (c: string | undefined) => ((c ?? "").trim() || "—") as string,
+      },
     ];
     if (canLocView) {
       base.push({
@@ -309,12 +379,67 @@ export default function StockArticleList() {
     return base;
   }, [T, canLocView, locationLabelByValue]);
 
+  const runPrint = async (listKey: string, sort: "asc" | "desc", modelId: string) => {
+    if (listKey !== "articles") return false;
+    const sorted = sortByIsoDate(rows, "updatedAt", sort);
+    const headers = [
+      T[3],
+      T[4],
+      T[5],
+      T[6],
+      T[7],
+      T[8],
+      T[23],
+      T[25] ?? "Devise",
+      ...(canLocView ? [T[9]] : []),
+      F[7],
+    ];
+    const bodyRows = sorted.map((r) => {
+      const loc = (r.location ?? "").trim();
+      const locLabel = canLocView ? locationLabelByValue[loc] ?? loc : "";
+      return [
+        r.sku,
+        r.name,
+        r.category,
+        r.unit,
+        String(r.qty),
+        String(r.minQty),
+        Number(r.price ?? 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        (r.currency ?? "").trim() || "—",
+        ...(canLocView ? [locLabel || "—"] : []),
+        (r.notes ?? "").trim() || "—",
+      ];
+    });
+    return await printStockListWithOptionalTemplate(
+      "articles",
+      `${T[0]} — ${Prt[0] ?? "Imprimer"}`,
+      buildPrintTableHtml(T[24] ?? T[0], headers, bodyRows),
+      modelId,
+    );
+  };
+
   return (
     <>
-      <Title level={3}>{T[0]}</Title>
-      <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-        {N[3] ?? ""}
-      </Typography.Paragraph>
+      <Space align="start" style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }}>
+        <div>
+          <Title level={3} style={{ marginBottom: 4 }}>
+            {T[0]}
+          </Title>
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            {N[4] ?? ""}
+          </Typography.Paragraph>
+        </div>
+        <Button
+          type="text"
+          icon={<PrinterOutlined />}
+          disabled={!canPrint}
+          aria-label={Prt[0] ?? "Exporter en PDF"}
+          title={Prt[0] ?? "Exporter en PDF"}
+          onClick={() => {
+            if (canPrint) setPrintOpen(true);
+          }}
+        />
+      </Space>
       <Space wrap style={{ marginBottom: 16, width: "100%", justifyContent: "space-between" }}>
         <Input
           allowClear
@@ -371,7 +496,13 @@ export default function StockArticleList() {
                 {T[12]}
               </Button>
               <Space>
-                <Button onClick={() => setModalOpen(false)}>{T[18]}</Button>
+                <Button
+                  type="text"
+                  icon={<CopyOutlined />}
+                  aria-label={getPageTexts("stockCommon")[0]}
+                  title={getPageTexts("stockCommon")[0]}
+                  onClick={duplicateArticleFromModal}
+                />
                 <Button type="primary" onClick={onSave}>
                   {T[17]}
                 </Button>
@@ -403,7 +534,7 @@ export default function StockArticleList() {
                 <>
                   {menu}
                   <Typography.Text type="secondary" style={{ display: "block", padding: "8px 12px", fontSize: 12 }}>
-                    {N[6] ?? ""}
+                    {N[7] ?? ""}
                   </Typography.Text>
                 </>
               )}
@@ -425,7 +556,7 @@ export default function StockArticleList() {
                 <>
                   {menu}
                   <Typography.Text type="secondary" style={{ display: "block", padding: "8px 12px", fontSize: 12 }}>
-                    {N[4] ?? ""}
+                    {N[5] ?? ""}
                   </Typography.Text>
                 </>
               )}
@@ -436,6 +567,31 @@ export default function StockArticleList() {
           </Form.Item>
           <Form.Item name="minQty" label={F[5]}>
             <InputNumber min={0} step={0.01} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="price" label={F[8]}>
+            <InputNumber min={0} step={0.01} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="currency" label={F[9]}>
+            <Select
+              showSearch
+              allowClear
+              optionFilterProp="label"
+              options={mergedCurrencyOptions}
+              placeholder={F[9]}
+              createRowLabel={C[25]}
+              onCreateRowClick={() => {
+                currencyQuickForm.resetFields();
+                setCurrencyQuickOpen(true);
+              }}
+              dropdownRender={(menu) => (
+                <>
+                  {menu}
+                  <Typography.Text type="secondary" style={{ display: "block", padding: "8px 12px", fontSize: 12 }}>
+                    {N[8] ?? ""}
+                  </Typography.Text>
+                </>
+              )}
+            />
           </Form.Item>
           {canLocView ? (
             <Form.Item name="location" label={F[6]}>
@@ -459,7 +615,7 @@ export default function StockArticleList() {
                   <>
                     {menu}
                     <Typography.Text type="secondary" style={{ display: "block", padding: "8px 12px", fontSize: 12 }}>
-                      {N[5] ?? ""}
+                      {N[6] ?? ""}
                     </Typography.Text>
                   </>
                 )}
@@ -509,6 +665,31 @@ export default function StockArticleList() {
           </Form.Item>
         </Form>
       </Modal>
+      <Modal
+        title={C[26]}
+        open={currencyQuickOpen}
+        onCancel={() => setCurrencyQuickOpen(false)}
+        onOk={onSaveQuickCurrency}
+        okText={C[13]}
+        cancelText={C[14]}
+        destroyOnHidden
+        width={440}
+      >
+        <Form form={currencyQuickForm} layout="vertical">
+          <Form.Item name="name" label={C[10]} rules={[{ required: true, message: unitRequiredMsg }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="code" label={C[11]}>
+            <Input />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <StockPrintModal
+        open={printOpen}
+        onClose={() => setPrintOpen(false)}
+        lists={[{ value: "articles", label: T[24] ?? T[0] }]}
+        onPrint={runPrint}
+      />
       <Modal
         title={C[6]}
         open={locationQuickOpen}

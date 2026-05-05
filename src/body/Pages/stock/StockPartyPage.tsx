@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Form, Input, Typography, message, Space } from "antd";
 import { Button, Loading, Modal, Table } from "../../../items";
-import { PlusOutlined, DeleteOutlined } from "@ant-design/icons";
+import { PlusOutlined, DeleteOutlined, PrinterOutlined, CopyOutlined } from "@ant-design/icons";
+import dayjs from "dayjs";
 import type { ColumnsType } from "antd/es/table";
 import { getPageTexts, usePageTexts } from "../../../hooks/usePageTexts";
 import {
@@ -11,6 +12,11 @@ import {
   type StockParty,
 } from "../../../lib/stockApi";
 import StockDataIoBar from "./StockDataIoBar";
+import { StockPrintModal } from "./StockPrintModal";
+import { buildPrintTableHtml, sortByIsoDate } from "../../utils/stockBrowserPrint";
+import { printStockListWithOptionalTemplate } from "../../utils/stockListPrintWithTemplate";
+import { useSession } from "../../context/SessionContext";
+import { canPrintStockClients, canPrintStockFournisseurs } from "../../utils/stockPrivileges";
 
 const { Title, Paragraph } = Typography;
 
@@ -21,11 +27,18 @@ type Props = { kind: Kind; pageKey: PageKey };
 
 export function StockPartyPage({ kind, pageKey }: Props) {
   const T = usePageTexts(pageKey);
+  const Prt = usePageTexts("stockPrint");
+  const { session } = useSession();
+  const canPrint = useMemo(
+    () => (kind === "SUPPLIER" ? canPrintStockFournisseurs(session) : canPrintStockClients(session)),
+    [kind, session],
+  );
   const [rows, setRows] = useState<StockParty[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingParty, setEditingParty] = useState<StockParty | null>(null);
   const [form] = Form.useForm<{ name: string; address?: string }>();
+  const [printOpen, setPrintOpen] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -80,6 +93,17 @@ export function StockPartyPage({ kind, pageKey }: Props) {
     }
   };
 
+  const duplicatePartyFromModal = () => {
+    const v = form.getFieldsValue() as { name?: string; address?: string };
+    const sfx = getPageTexts("stockCommon")[1] || " (copie)";
+    const nm = (v.name ?? "").trim();
+    form.setFieldsValue({
+      name: nm ? `${nm}${sfx}` : nm,
+      address: (v.address ?? "").trim(),
+    });
+    setEditingParty(null);
+  };
+
   const editLbl = getPageTexts("stockArticles")[11];
 
   const confirmDeleteEditing = () => {
@@ -110,12 +134,61 @@ export function StockPartyPage({ kind, pageKey }: Props) {
       ellipsis: true,
       render: (a: string) => a || "—",
     },
+    {
+      title: T[13],
+      dataIndex: "createdAt",
+      key: "createdAt",
+      width: 160,
+      render: (s?: string) => (s ? dayjs(s).format("DD/MM/YYYY HH:mm") : "—"),
+    },
   ];
+
+  const printListLabel = T[14];
+
+  const runPrint = async (listKey: string, sort: "asc" | "desc", modelId: string) => {
+    if (listKey !== "parties") return false;
+    const sorted = sortByIsoDate(rows, "createdAt", sort);
+    const headers = [T[3], T[11], Prt[7] ?? "Date"];
+    const bodyRows = sorted.map((r) => [
+      r.name,
+      (r.address ?? "").trim() || "—",
+      r.createdAt ? dayjs(r.createdAt).format("DD/MM/YYYY HH:mm") : "—",
+    ]);
+    return await printStockListWithOptionalTemplate(
+      "parties",
+      `${T[0]} — ${Prt[0]}`,
+      buildPrintTableHtml(printListLabel, headers, bodyRows),
+      modelId,
+    );
+  };
 
   return (
     <Loading spinning={loading}>
-      <Title level={3}>{T[0]}</Title>
-      <Paragraph type="secondary">{T[1]}</Paragraph>
+      <Space align="start" style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }}>
+        <div>
+          <Title level={3} style={{ marginBottom: 4 }}>
+            {T[0]}
+          </Title>
+          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            {T[1]}
+          </Paragraph>
+        </div>
+        <Button
+          icon={<PrinterOutlined />}
+          disabled={!canPrint}
+          onClick={() => {
+            if (canPrint) setPrintOpen(true);
+          }}
+        >
+          {Prt[0] ?? "Imprimer"}
+        </Button>
+      </Space>
+      <StockPrintModal
+        open={printOpen}
+        onClose={() => setPrintOpen(false)}
+        lists={[{ value: "parties", label: printListLabel }]}
+        onPrint={runPrint}
+      />
       <Space wrap style={{ width: "100%", justifyContent: "space-between", marginBottom: 16 }}>
         <Button
           type="primary"
@@ -176,14 +249,12 @@ export function StockPartyPage({ kind, pageKey }: Props) {
               </Button>
               <Space>
                 <Button
-                  onClick={() => {
-                    setModalOpen(false);
-                    setEditingParty(null);
-                    form.resetFields();
-                  }}
-                >
-                  {T[5]}
-                </Button>
+                  type="text"
+                  icon={<CopyOutlined />}
+                  aria-label={getPageTexts("stockCommon")[0]}
+                  title={getPageTexts("stockCommon")[0]}
+                  onClick={duplicatePartyFromModal}
+                />
                 <Button type="primary" onClick={onSave}>
                   {T[4]}
                 </Button>

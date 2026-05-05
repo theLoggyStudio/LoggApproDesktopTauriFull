@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Card, Col, Row, Statistic, Tag, Typography } from "antd";
+import { Card, Col, Row, Space, Statistic, Tag, Typography } from "antd";
 import { Button, Loading, Table } from "../../../items";
-import { WarningOutlined, ReloadOutlined } from "@ant-design/icons";
+import { WarningOutlined, ReloadOutlined, PrinterOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
 import {
   ResponsiveContainer,
@@ -18,16 +18,22 @@ import {
 import { usePageTexts } from "../../../hooks/usePageTexts";
 import { fetchDashboardStats, type DashboardStats } from "../../../lib/stockApi";
 import { useSession } from "../../context/SessionContext";
-import { hasStockPrivilege } from "../../utils/stockPrivileges";
+import { canPrintStockDashboard, hasStockPrivilege } from "../../utils/stockPrivileges";
+import { StockPrintModal } from "./StockPrintModal";
+import { buildPrintTableHtml, sortByIsoDate, sortByNumber } from "../../utils/stockBrowserPrint";
+import { printStockListWithOptionalTemplate } from "../../utils/stockListPrintWithTemplate";
 
 const { Title, Text } = Typography;
 
 export default function StockDashboard() {
   const T = usePageTexts("stockDashboard");
+  const Prt = usePageTexts("stockPrint");
   const { session } = useSession();
   const showCharts = hasStockPrivilege(session, "dashboard_charts");
+  const canPrint = canPrintStockDashboard(session);
   const [data, setData] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [printOpen, setPrintOpen] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -51,9 +57,70 @@ export default function StockDashboard() {
   const chartMv = data?.chartMovements14d ?? [];
   const chartCat = data?.chartCategoryQty ?? [];
 
+  const runPrint = async (listKey: string, sort: "asc" | "desc", modelId: string) => {
+    if (listKey === "recent") {
+      const list = sortByIsoDate([...(data?.recentMovements ?? [])], "createdAt", sort);
+      const headers = [T[5], T[6], T[7], T[8], T[15], T[9]];
+      const body = list.map((r) => {
+        const u = r.moveType?.toUpperCase();
+        const tiers =
+          u === "IN" ? (r.supplierName ?? "") : u === "OUT" ? (r.clientName ?? "") : "";
+        return [
+          r.sku,
+          r.articleName,
+          moveLabel(r.moveType),
+          String(r.qty),
+          tiers,
+          r.createdAt ? dayjs(r.createdAt).format("DD/MM/YYYY HH:mm") : "",
+        ];
+      });
+      return await printStockListWithOptionalTemplate(
+        "dashboard_recent",
+        `${T[0]} — ${Prt[0]}`,
+        buildPrintTableHtml(T[18] ?? T[4], headers, body),
+        modelId,
+      );
+    }
+    if (listKey === "categories") {
+      const list = sortByNumber([...chartCat], "qty", sort);
+      const headers = [T[17], T[8]];
+      const body = list.map((r) => [r.name, String(r.qty)]);
+      return await printStockListWithOptionalTemplate(
+        "dashboard_categories",
+        `${T[0]} — ${Prt[0]}`,
+        buildPrintTableHtml(T[19] ?? T[17], headers, body),
+        modelId,
+      );
+    }
+    return false;
+  };
+
   return (
     <Loading spinning={loading}>
-      <Title level={3}>{T[0]}</Title>
+      <Space align="start" style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }}>
+        <Title level={3} style={{ margin: 0 }}>
+          {T[0]}
+        </Title>
+        <Button
+          type="text"
+          icon={<PrinterOutlined />}
+          disabled={!canPrint}
+          aria-label={Prt[0] ?? "Exporter en PDF"}
+          title={Prt[0] ?? "Exporter en PDF"}
+          onClick={() => {
+            if (canPrint) setPrintOpen(true);
+          }}
+        />
+      </Space>
+      <StockPrintModal
+        open={printOpen}
+        onClose={() => setPrintOpen(false)}
+        lists={[
+          { value: "recent", label: T[18] ?? T[4] },
+          { value: "categories", label: T[19] ?? T[17] },
+        ]}
+        onPrint={runPrint}
+      />
       <Row gutter={[16, 16]}>
         <Col xs={24} md={8}>
           <Card>

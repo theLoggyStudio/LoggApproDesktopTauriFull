@@ -12,12 +12,14 @@ export default function StockArticlesLayout() {
     ? "units"
     : pathname.includes("/categories")
       ? "categories"
-      : "list";
+      : pathname.includes("/devises")
+        ? "devises"
+        : "list";
 
   return (
     <>
       <Form layout="inline" style={{ marginBottom: 16 }}>
-        <Form.Item label={N[7]}>
+        <Form.Item label={N[9]}>
           <Select
             style={{ minWidth: 240 }}
             value={activeKey}
@@ -29,6 +31,7 @@ export default function StockArticlesLayout() {
               { value: "list", label: N[0] },
               { value: "units", label: N[1] },
               { value: "categories", label: N[2] },
+              { value: "devises", label: N[3] },
             ]}
           />
         </Form.Item>

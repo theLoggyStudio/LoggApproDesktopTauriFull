@@ -34,7 +34,8 @@ export function AntdThemeBridge({ children }: { children: React.ReactNode }) {
             darkItemBg: "transparent",
             darkItemColor: c.textPrimary,
             darkItemSelectedBg: c.secondary,
-            darkItemSelectedColor: c.primary,
+            /** Évite le texte « vert sur vert » sur le Sider : même teinte que `colorTextTertiary` global. */
+            darkItemSelectedColor: c.textBodyTertiary ?? "#9ca3af",
             darkSubMenuItemBg: "transparent",
           },
         },

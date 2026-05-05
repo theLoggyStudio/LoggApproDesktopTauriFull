@@ -1,198 +1,48 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Card,
-  Checkbox,
-  Descriptions,
-  Form,
-  Input,
-  Popconfirm,
-  Space,
-  Tag,
-  Typography,
-  message,
-  theme,
-} from "antd";
-import { Button, Loading, Modal, Table } from "../../../items";
-import { UserOutlined, PlusOutlined, DeleteOutlined } from "@ant-design/icons";
+import { useCallback, useEffect, useState } from "react";
+import { Card, Descriptions, Form, Input, Popconfirm, Space, Tag, Typography, message, theme } from "antd";
+import { Button, Loading, Modal, Select, Table } from "../../../items";
+import { UserOutlined, PlusOutlined, DeleteOutlined, CopyOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { getPageTexts, usePageTexts } from "../../../hooks/usePageTexts";
 import { useSession } from "../../context/SessionContext";
 import {
   deleteStockAppUser,
   fetchStockAppUsers,
+  fetchStockRoles,
   upsertStockAppUser,
+  upsertStockRole,
   type StockAppUserRow,
+  type StockRoleRow,
 } from "../../../lib/stockApi";
-import {
-  STOCK_EDITABLE_PRIVILEGE_KEYS,
-  STOCK_IO_PRIVILEGE_KEYS,
-  STOCK_DOCUMENT_PRIVILEGE_KEYS,
-  STOCK_DEFAULT_INITIAL_PASSWORD,
-  getDefaultStockPrivilegesForNewUser,
-} from "../../utils/stockPrivileges";
+import { STOCK_DEFAULT_INITIAL_PASSWORD, getDefaultStockPrivilegesForNewRole } from "../../utils/stockPrivileges";
+import { useStockAdminPrivilegeGroups } from "./StockAdminPrivilegePicker";
 
 const { Title, Text, Paragraph } = Typography;
-
-const PRIV_LABEL_INDEX: Record<(typeof STOCK_EDITABLE_PRIVILEGE_KEYS)[number], number> = {
-  dashboard: 14,
-  articles: 15,
-  warehouse: 26,
-  movements: 16,
-  fournisseurs: 17,
-  clients: 18,
-  documents: 40,
-  settings: 19,
-};
-
-const PRIV_IO_LABEL_INDEX: Record<(typeof STOCK_IO_PRIVILEGE_KEYS)[number], number> = {
-  dashboard_charts: 27,
-  articles_import: 28,
-  articles_export: 29,
-  movements_import: 30,
-  movements_export: 31,
-  fournisseurs_import: 32,
-  fournisseurs_export: 33,
-  clients_import: 34,
-  clients_export: 35,
-  ref_units_import: 36,
-  ref_units_export: 37,
-  ref_locations_import: 38,
-  ref_locations_export: 39,
-  ref_locations_view: 53,
-  ref_locations_create: 54,
-  ref_locations_edit: 55,
-  ref_locations_delete: 56,
-  ref_categories_import: 51,
-  ref_categories_export: 52,
-};
-
-const PRIV_DOC_LABEL_INDEX: Record<(typeof STOCK_DOCUMENT_PRIVILEGE_KEYS)[number], number> = {
-  documents_view: 41,
-  documents_import_png: 42,
-  documents_export_png: 43,
-  documents_delete_png: 44,
-  documents_import_jpeg: 45,
-  documents_export_jpeg: 46,
-  documents_delete_jpeg: 47,
-  documents_import_pdf: 48,
-  documents_export_pdf: 49,
-  documents_delete_pdf: 50,
-};
-
-type PrivilegeGroup = { title: string; keys: readonly string[] };
-
-function StockPrivilegeGroupedPicker({
-  value,
-  onChange,
-  groups,
-  privLabel,
-  selectAllLabel,
-}: {
-  value?: string[];
-  onChange?: (v: string[]) => void;
-  groups: PrivilegeGroup[];
-  privLabel: (key: string) => string;
-  selectAllLabel: string;
-}) {
-  const selected = value ?? [];
-
-  const applySet = (next: Set<string>) => {
-    onChange?.([...next].sort((a, b) => a.localeCompare(b)));
-  };
-
-  const toggleKey = (key: string, checked: boolean) => {
-    const s = new Set(selected);
-    if (checked) s.add(key);
-    else s.delete(key);
-    applySet(s);
-  };
-
-  const toggleGroup = (keys: readonly string[], checked: boolean) => {
-    const s = new Set(selected);
-    keys.forEach((k) => {
-      if (checked) s.add(k);
-      else s.delete(k);
-    });
-    applySet(s);
-  };
-
-  return (
-    <div>
-      {groups.map((g, idx) => {
-        const inGroup = g.keys.filter((k) => selected.includes(k)).length;
-        const all = g.keys.length > 0 && inGroup === g.keys.length;
-        const some = inGroup > 0 && !all;
-        return (
-          <div key={g.title}>
-            {idx > 0 ? <br /> : null}
-            <Text strong style={{ display: "block", marginBottom: 8 }}>
-              {g.title}
-            </Text>
-            <Checkbox
-              indeterminate={some}
-              checked={all}
-              onChange={(e) => toggleGroup(g.keys, e.target.checked)}
-              style={{ display: "block", marginBottom: 8 }}
-            >
-              {selectAllLabel}
-            </Checkbox>
-            <Space direction="vertical" size={4} style={{ marginLeft: 20, marginBottom: 4 }}>
-              {g.keys.map((k) => (
-                <Checkbox key={k} checked={selected.includes(k)} onChange={(e) => toggleKey(k, e.target.checked)}>
-                  {privLabel(k)}
-                </Checkbox>
-              ))}
-            </Space>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 export default function StockUserPage() {
   const T = usePageTexts("stockUser");
   const U = usePageTexts("stockUserAdmin");
+  const R = usePageTexts("stockRoles");
+  const C = usePageTexts("stockSelectCreateRow");
   const { session } = useSession();
   const { token } = theme.useToken();
+  const { privLabel } = useStockAdminPrivilegeGroups();
   const [rows, setRows] = useState<StockAppUserRow[]>([]);
+  const [roles, setRoles] = useState<StockRoleRow[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [roleQuickOpen, setRoleQuickOpen] = useState(false);
+  const [roleQuickForm] = Form.useForm<{ name: string; code?: string; description?: string }>();
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form] = Form.useForm<{
     login: string;
     displayName: string;
+    address: string;
+    roleId?: string;
     password: string;
-    privileges: string[];
   }>();
 
   const isSadmin = session?.role === "sadmin";
-
-  const privilegeGroups = useMemo<PrivilegeGroup[]>(
-    () => [
-      { title: U[57], keys: STOCK_EDITABLE_PRIVILEGE_KEYS },
-      { title: U[58], keys: ["dashboard_charts"] },
-      { title: U[59], keys: ["articles_import", "articles_export"] },
-      { title: U[60], keys: ["movements_import", "movements_export"] },
-      { title: U[61], keys: ["fournisseurs_import", "fournisseurs_export"] },
-      { title: U[62], keys: ["clients_import", "clients_export"] },
-      { title: U[63], keys: ["ref_units_import", "ref_units_export"] },
-      {
-        title: U[64],
-        keys: [
-          "ref_locations_import",
-          "ref_locations_export",
-          "ref_locations_view",
-          "ref_locations_create",
-          "ref_locations_edit",
-          "ref_locations_delete",
-        ],
-      },
-      { title: U[65], keys: ["ref_categories_import", "ref_categories_export"] },
-      { title: U[66], keys: STOCK_DOCUMENT_PRIVILEGE_KEYS },
-    ],
-    [U],
-  );
 
   const okDel = getPageTexts("stockArticles")[15];
   const cancelDel = getPageTexts("stockArticles")[16];
@@ -210,25 +60,28 @@ export default function StockUserPage() {
   }, [loadUsers]);
 
   useEffect(() => {
+    if (!isSadmin) return;
+    fetchStockRoles()
+      .then(setRoles)
+      .catch(() => setRoles([]));
+  }, [isSadmin]);
+
+  useEffect(() => {
     if (!modalOpen) return;
     const timer = window.setTimeout(() => {
       if (editingId) {
         const row = rows.find((x) => x.id === editingId);
         if (row) {
-          const allEditable = [...STOCK_EDITABLE_PRIVILEGE_KEYS, ...STOCK_IO_PRIVILEGE_KEYS, ...STOCK_DOCUMENT_PRIVILEGE_KEYS];
-          const editable = allEditable.filter((k) => row.privileges.includes(k));
           form.setFieldsValue({
             login: row.login,
             displayName: row.displayName,
+            address: row.address ?? "",
+            roleId: row.roleId?.trim() || undefined,
             password: "",
-            privileges: editable.length ? editable : getDefaultStockPrivilegesForNewUser(),
           });
         }
       } else {
         form.resetFields();
-        form.setFieldsValue({
-          privileges: getDefaultStockPrivilegesForNewUser(),
-        });
       }
     }, 0);
     return () => window.clearTimeout(timer);
@@ -253,8 +106,9 @@ export default function StockUserPage() {
         id: editingId ?? undefined,
         login: v.login.trim(),
         displayName: v.displayName.trim(),
+        address: v.address?.trim() ?? "",
+        roleId: v.roleId?.trim() || undefined,
         password: v.password?.trim() || undefined,
-        privileges: v.privileges ?? [],
       });
       message.success(U[11]);
       if (res.defaultPassword) {
@@ -265,6 +119,56 @@ export default function StockUserPage() {
     } catch (e) {
       message.error(String(e));
     }
+  };
+
+  const roleLabel = useCallback(
+    (id?: string) => {
+      const rid = id?.trim();
+      if (!rid) return T[5];
+      return roles.find((r) => r.id === rid)?.name ?? rid;
+    },
+    [roles, T],
+  );
+
+  const onRoleQuickOk = async () => {
+    const v = await roleQuickForm.validateFields().catch(() => null);
+    if (!v) return;
+    try {
+      const res = await upsertStockRole({
+        name: v.name.trim(),
+        code: v.code?.trim() || undefined,
+        description: v.description?.trim() || undefined,
+        privileges: getDefaultStockPrivilegesForNewRole(),
+      });
+      message.success(R[10]);
+      const list = await fetchStockRoles();
+      setRoles(list);
+      form.setFieldValue("roleId", res.id);
+      setRoleQuickOpen(false);
+      roleQuickForm.resetFields();
+    } catch (e) {
+      message.error(String(e));
+    }
+  };
+
+  const duplicateUserFromModal = () => {
+    const v = form.getFieldsValue() as {
+      login: string;
+      displayName: string;
+      address: string;
+      roleId?: string;
+      password: string;
+    };
+    const sfx = getPageTexts("stockCommon")[1] || "_copie";
+    const login = (v.login ?? "").trim();
+    form.setFieldsValue({
+      login: login ? `${login}${sfx}` : "",
+      displayName: (v.displayName ?? "").trim(),
+      address: (v.address ?? "").trim(),
+      roleId: v.roleId,
+      password: "",
+    });
+    setEditingId(null);
   };
 
   const onDelete = async (id: string) => {
@@ -279,20 +183,11 @@ export default function StockUserPage() {
     }
   };
 
-  const privLabel = (key: string) => {
-    const k = key as keyof typeof PRIV_LABEL_INDEX;
-    if (k in PRIV_LABEL_INDEX) return U[PRIV_LABEL_INDEX[k]] ?? key;
-    const ik = key as keyof typeof PRIV_IO_LABEL_INDEX;
-    if (ik in PRIV_IO_LABEL_INDEX) return U[PRIV_IO_LABEL_INDEX[ik]] ?? key;
-    const dk = key as keyof typeof PRIV_DOC_LABEL_INDEX;
-    if (dk in PRIV_DOC_LABEL_INDEX) return U[PRIV_DOC_LABEL_INDEX[dk]] ?? key;
-    if (key === "user") return U[22];
-    return key;
-  };
-
   const columns: ColumnsType<StockAppUserRow> = [
     { title: U[3], dataIndex: "login", key: "login", ellipsis: true },
     { title: U[4], dataIndex: "displayName", key: "displayName", ellipsis: true },
+    { title: T[3], dataIndex: "roleId", key: "roleId", width: 160, ellipsis: true, render: (_: unknown, r) => roleLabel(r.roleId) },
+    { title: T[7], dataIndex: "address", key: "address", ellipsis: true, width: 200 },
     {
       title: U[5],
       dataIndex: "privileges",
@@ -334,6 +229,15 @@ export default function StockUserPage() {
           <Descriptions.Item label={T[4]}>
             <Text code>{session.id}</Text>
           </Descriptions.Item>
+          {session.role === "stock_user" ? (
+            <Descriptions.Item label={T[7]}>
+              {session.address?.trim() ? (
+                <Text style={{ whiteSpace: "pre-wrap" }}>{session.address}</Text>
+              ) : (
+                <Text type="secondary">—</Text>
+              )}
+            </Descriptions.Item>
+          ) : null}
         </Descriptions>
         <Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
           {T[6]}
@@ -373,8 +277,7 @@ export default function StockUserPage() {
         okText={U[7]}
         cancelText={U[8]}
         destroyOnHidden
-        width={680}
-        styles={{ body: { maxHeight: "72vh", overflowY: "auto" } }}
+        width={520}
         footer={
           editingId ? (
             <div
@@ -392,7 +295,13 @@ export default function StockUserPage() {
                 </Button>
               </Popconfirm>
               <Space>
-                <Button onClick={() => setModalOpen(false)}>{U[8]}</Button>
+                <Button
+                  type="text"
+                  icon={<CopyOutlined />}
+                  aria-label={getPageTexts("stockCommon")[0]}
+                  title={getPageTexts("stockCommon")[0]}
+                  onClick={duplicateUserFromModal}
+                />
                 <Button type="primary" onClick={onModalOk}>
                   {U[7]}
                 </Button>
@@ -408,24 +317,54 @@ export default function StockUserPage() {
           <Form.Item name="displayName" label={U[4]}>
             <Input />
           </Form.Item>
+          <Form.Item name="roleId" label={T[3]}>
+            <Select
+              allowClear
+              placeholder={T[5]}
+              options={roles.map((r) => ({ value: r.id, label: r.name }))}
+              showSearch
+              optionFilterProp="label"
+              createRowLabel={C[28]}
+              onCreateRowClick={() => {
+                roleQuickForm.resetFields();
+                setRoleQuickOpen(true);
+              }}
+            />
+          </Form.Item>
+          <Paragraph type="secondary" style={{ marginTop: 0, marginBottom: 12 }}>
+            {U[77]}
+          </Paragraph>
+          <Form.Item name="address" label={T[7]}>
+            <Input.TextArea rows={3} placeholder={T[7]} allowClear />
+          </Form.Item>
           <Form.Item name="password" label={U[6]} extra={editingId ? U[24] : undefined}>
             <Input.Password autoComplete="new-password" placeholder={editingId ? U[24] : `(${STOCK_DEFAULT_INITIAL_PASSWORD})`} />
           </Form.Item>
-          <Form.Item
-            name="privileges"
-            label={U[5]}
-            rules={[
-              {
-                validator: (_, v) =>
-                  Array.isArray(v) && v.length > 0 ? Promise.resolve() : Promise.reject(new Error(U[25])),
-              },
-            ]}
-          >
-            <StockPrivilegeGroupedPicker
-              groups={privilegeGroups}
-              privLabel={privLabel}
-              selectAllLabel={U[67]}
-            />
+        </Form>
+      </Modal>
+
+      <Modal
+        title={C[29]}
+        open={roleQuickOpen}
+        onCancel={() => {
+          setRoleQuickOpen(false);
+          roleQuickForm.resetFields();
+        }}
+        onOk={() => void onRoleQuickOk()}
+        okText={R[6]}
+        cancelText={R[7]}
+        destroyOnHidden
+        width={440}
+      >
+        <Form form={roleQuickForm} layout="vertical">
+          <Form.Item name="name" label={R[3]} rules={[{ required: true, message: R[11] }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="code" label={R[4]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="description" label={R[5]}>
+            <Input.TextArea rows={2} />
           </Form.Item>
         </Form>
       </Modal>

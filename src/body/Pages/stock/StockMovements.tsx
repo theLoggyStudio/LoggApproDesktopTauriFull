@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  DatePicker,
   Form,
   InputNumber,
   Input,
@@ -10,9 +11,9 @@ import {
   Tag,
 } from "antd";
 import { Button, Modal, Select, Table } from "../../../items";
-import { PlusOutlined } from "@ant-design/icons";
+import { CopyOutlined, MinusCircleOutlined, PlusOutlined, PrinterOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import dayjs from "dayjs";
+import dayjs, { type Dayjs } from "dayjs";
 import { getPageTexts, usePageTexts } from "../../../hooks/usePageTexts";
 import {
   fetchArticles,
@@ -27,8 +28,11 @@ import {
   type StockMovement,
 } from "../../../lib/stockApi";
 import { useSession } from "../../context/SessionContext";
-import { hasStockPrivilege } from "../../utils/stockPrivileges";
+import { canPrintStockMovements, hasStockPrivilege } from "../../utils/stockPrivileges";
 import StockDataIoBar from "./StockDataIoBar";
+import { StockPrintModal } from "./StockPrintModal";
+import { buildPrintTableHtml, sortByIsoDate } from "../../utils/stockBrowserPrint";
+import { printStockListWithOptionalTemplate } from "../../utils/stockListPrintWithTemplate";
 
 const { Title, Text } = Typography;
 
@@ -60,6 +64,7 @@ async function fileToBase64(file: File): Promise<string> {
 export default function StockMovements() {
   const { session } = useSession();
   const T = usePageTexts("stockMovements");
+  const Prt = usePageTexts("stockPrint");
   const docT = getPageTexts("stockDocuments");
   const C = usePageTexts("stockSelectCreateRow");
   const D = usePageTexts("stockDashboard");
@@ -77,20 +82,34 @@ export default function StockMovements() {
   const [partyQuickKind, setPartyQuickKind] = useState<"SUPPLIER" | "CLIENT" | null>(null);
   const articleQuickSourceRef = useRef<"filter" | "form">("form");
   const [form] = Form.useForm<{
-    articleId: string;
+    movementAt: Dayjs;
     moveType: string;
-    qty: number;
     reason?: string;
     refDoc?: string;
     supplierName?: string;
     clientName?: string;
+    lines: { articleId: string; qty: number; priceIn?: number; priceOut?: number }[];
   }>();
   const [articleQuickForm] = Form.useForm<{ sku: string; name: string; category?: string }>();
   const [partyQuickForm] = Form.useForm<{ name: string; address: string }>();
   const [receiptFiles, setReceiptFiles] = useState<File[]>([]);
   const detailReceiptInputRef = useRef<HTMLInputElement>(null);
+  const [printOpen, setPrintOpen] = useState(false);
+  const canPrint = canPrintStockMovements(session);
 
   const moveTypeWatch = Form.useWatch("moveType", form);
+
+  const movementBatchKey = useCallback((m: StockMovement) => m.batchId || m.id, []);
+
+  const linesInDetailBatch = useMemo(() => {
+    if (!detailMovement) return [];
+    const bid = movementBatchKey(detailMovement);
+    return movements
+      .filter((m) => movementBatchKey(m) === bid)
+      .sort((a, b) => (a.lineNo ?? 0) - (b.lineNo ?? 0));
+  }, [detailMovement, movements, movementBatchKey]);
+
+  const receiptMovementId = linesInDetailBatch[0]?.id ?? detailMovement?.id;
 
   const loadParties = useCallback(() => {
     fetchParties("SUPPLIER").then((rows) =>
@@ -198,6 +217,7 @@ export default function StockMovements() {
         unit,
         qty: 0,
         minQty: 0,
+        price: 0,
         location,
         notes: "",
       });
@@ -206,7 +226,14 @@ export default function StockMovements() {
       if (articleQuickSourceRef.current === "filter") {
         setFilterArticleId(res.id);
       } else {
-        form.setFieldsValue({ articleId: res.id });
+        const cur = form.getFieldValue("lines") as { articleId?: string }[] | undefined;
+        if (cur?.length) {
+          form.setFieldValue(["lines", 0, "articleId"], res.id);
+        } else {
+          form.setFieldsValue({
+            lines: [{ articleId: res.id, qty: 1, priceIn: 0, priceOut: 0 }],
+          });
+        }
       }
       setArticleQuickOpen(false);
       articleQuickForm.resetFields();
@@ -242,11 +269,18 @@ export default function StockMovements() {
     const v = await form.validateFields().catch(() => null);
     if (!v) return;
     const receipts = receiptFiles.slice(0, 3);
+    const mt = v.moveType?.toUpperCase() ?? "";
+    const lines = (v.lines ?? []).map((row) => ({
+      articleId: row.articleId,
+      qty: Number(row.qty),
+      priceIn: mt === "IN" ? Number(row.priceIn ?? 0) : 0,
+      priceOut: mt === "OUT" ? Number(row.priceOut ?? 0) : 0,
+    }));
     try {
       const r = await addMovement({
-        articleId: v.articleId,
         moveType: v.moveType,
-        qty: Number(v.qty),
+        createdAt: v.movementAt?.format("YYYY-MM-DD HH:mm:ss"),
+        lines,
         reason: v.reason,
         refDoc: v.refDoc,
         supplierName: v.moveType === "IN" ? v.supplierName?.trim() || undefined : undefined,
@@ -289,14 +323,14 @@ export default function StockMovements() {
   const onPickDetailReceipt = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file || !detailMovement || !session) return;
+    if (!file || !detailMovement || !receiptMovementId || !session) return;
     const n = detailMovement.receiptCount ?? detailMovement.receiptDocumentIds?.length ?? 0;
     if (n >= 3) {
       message.warning(T[23]);
       return;
     }
     try {
-      const ok = await uploadReceiptForMovement(file, detailMovement.id);
+      const ok = await uploadReceiptForMovement(file, receiptMovementId);
       if (ok) {
         message.success(docT[15]);
         await loadMoves();
@@ -304,6 +338,31 @@ export default function StockMovements() {
     } catch (err) {
       message.error(String(err));
     }
+  };
+
+  const runPrint = async (listKey: string, sort: "asc" | "desc", modelId: string) => {
+    if (listKey !== "movements") return false;
+    const sorted = sortByIsoDate(movements, "createdAt", sort);
+    const headers = [T[10], skuLabel, T[2], T[3], T[4], T[29], T[30], tiersTitle, T[5], T[6], T[21]];
+    const bodyRows = sorted.map((r) => [
+      r.createdAt ? dayjs(r.createdAt).format("DD/MM/YYYY HH:mm") : "",
+      r.sku,
+      r.articleName,
+      typeLabel(r.moveType),
+      String(r.qty),
+      String(r.priceIn ?? 0),
+      String(r.priceOut ?? 0),
+      tiersCell(r),
+      r.reason ?? "",
+      r.refDoc ?? "",
+      String(r.receiptCount ?? r.receiptDocumentIds?.length ?? 0),
+    ]);
+    return await printStockListWithOptionalTemplate(
+      "movements",
+      `${T[0]} — ${Prt[0]}`,
+      buildPrintTableHtml(T[25] ?? T[0], headers, bodyRows),
+      modelId,
+    );
   };
 
   const columns: ColumnsType<StockMovement> = [
@@ -329,6 +388,20 @@ export default function StockMovements() {
     },
     { title: T[4], dataIndex: "qty", key: "qty", width: 96 },
     {
+      title: T[29],
+      dataIndex: "priceIn",
+      key: "priceIn",
+      width: 100,
+      render: (v: number | undefined) => String(v ?? 0),
+    },
+    {
+      title: T[30],
+      dataIndex: "priceOut",
+      key: "priceOut",
+      width: 100,
+      render: (v: number | undefined) => String(v ?? 0),
+    },
+    {
       title: tiersTitle,
       key: "tiers",
       width: 160,
@@ -351,7 +424,26 @@ export default function StockMovements() {
 
   return (
     <>
-      <Title level={3}>{T[0]}</Title>
+      <Space align="start" style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }}>
+        <Title level={3} style={{ margin: 0 }}>
+          {T[0]}
+        </Title>
+        <Button
+          icon={<PrinterOutlined />}
+          disabled={!canPrint}
+          onClick={() => {
+            if (canPrint) setPrintOpen(true);
+          }}
+        >
+          {Prt[0] ?? "Imprimer"}
+        </Button>
+      </Space>
+      <StockPrintModal
+        open={printOpen}
+        onClose={() => setPrintOpen(false)}
+        lists={[{ value: "movements", label: T[25] ?? T[0] }]}
+        onPrint={runPrint}
+      />
       <Space wrap style={{ marginBottom: 16, width: "100%", justifyContent: "space-between" }}>
         <Space>
           <Text type="secondary">{T[8]}</Text>
@@ -386,7 +478,11 @@ export default function StockMovements() {
             onClick={() => {
               setDetailMovement(null);
               form.resetFields();
-              form.setFieldsValue({ moveType: "IN" });
+              form.setFieldsValue({
+                movementAt: dayjs(),
+                moveType: "IN",
+                lines: [{ qty: 1, priceIn: 0, priceOut: 0 }],
+              });
               setReceiptFiles([]);
               setModalOpen(true);
             }}
@@ -400,7 +496,7 @@ export default function StockMovements() {
         loading={loading}
         columns={columns}
         dataSource={movements}
-        scroll={{ x: 1200 }}
+        scroll={{ x: 1380 }}
         onRow={(record) => ({
           onClick: () => setDetailMovement(record),
           style: { cursor: "pointer" },
@@ -411,11 +507,39 @@ export default function StockMovements() {
         open={!!detailMovement}
         onCancel={() => setDetailMovement(null)}
         footer={
-          <Button type="primary" onClick={() => setDetailMovement(null)}>
-            {T[20]}
-          </Button>
+          <Space>
+            <Button
+              type="text"
+              icon={<CopyOutlined />}
+              aria-label={getPageTexts("stockCommon")[0]}
+              title={getPageTexts("stockCommon")[0]}
+              onClick={() => {
+                if (!detailMovement) return;
+                const m = detailMovement;
+                const batchLines =
+                  linesInDetailBatch.length > 0 ? linesInDetailBatch : [m];
+                setDetailMovement(null);
+                form.setFieldsValue({
+                  movementAt: m.createdAt ? dayjs(m.createdAt) : dayjs(),
+                  moveType: m.moveType,
+                  reason: m.reason || "",
+                  refDoc: m.refDoc || "",
+                  supplierName: m.supplierName,
+                  clientName: m.clientName,
+                  lines: batchLines.map((l) => ({
+                    articleId: l.articleId,
+                    qty: l.qty,
+                    priceIn: l.priceIn ?? 0,
+                    priceOut: l.priceOut ?? 0,
+                  })),
+                });
+                setReceiptFiles([]);
+                setModalOpen(true);
+              }}
+            />
+          </Space>
         }
-        width={520}
+        width={640}
         destroyOnHidden
       >
         {detailMovement ? (
@@ -423,13 +547,37 @@ export default function StockMovements() {
             <Descriptions.Item label={T[10]}>
               {detailMovement.createdAt ? dayjs(detailMovement.createdAt).format("DD/MM/YYYY HH:mm") : "—"}
             </Descriptions.Item>
-            <Descriptions.Item label={skuLabel}>{detailMovement.sku}</Descriptions.Item>
-            <Descriptions.Item label={T[2]}>{detailMovement.articleName}</Descriptions.Item>
             <Descriptions.Item label={T[3]}>{typeLabel(detailMovement.moveType)}</Descriptions.Item>
-            <Descriptions.Item label={T[4]}>{detailMovement.qty}</Descriptions.Item>
             <Descriptions.Item label={tiersTitle}>{tiersCell(detailMovement) || "—"}</Descriptions.Item>
             <Descriptions.Item label={T[5]}>{detailMovement.reason || "—"}</Descriptions.Item>
             <Descriptions.Item label={T[6]}>{detailMovement.refDoc || "—"}</Descriptions.Item>
+            <Descriptions.Item label={T[31]}>
+              <Table<StockMovement>
+                size="small"
+                pagination={false}
+                rowKey="id"
+                dataSource={
+                  linesInDetailBatch.length > 0 ? linesInDetailBatch : detailMovement ? [detailMovement] : []
+                }
+                columns={[
+                  { title: skuLabel, dataIndex: "sku", width: 110 },
+                  { title: T[2], dataIndex: "articleName", ellipsis: true },
+                  { title: T[4], dataIndex: "qty", width: 88 },
+                  {
+                    title: T[29],
+                    dataIndex: "priceIn",
+                    width: 96,
+                    render: (v: number | undefined) => String(v ?? 0),
+                  },
+                  {
+                    title: T[30],
+                    dataIndex: "priceOut",
+                    width: 96,
+                    render: (v: number | undefined) => String(v ?? 0),
+                  },
+                ]}
+              />
+            </Descriptions.Item>
             <Descriptions.Item label={T[24]}>
               <Space direction="vertical" size="small" style={{ width: "100%" }}>
                 <Text>
@@ -471,23 +619,26 @@ export default function StockMovements() {
         onOk={onSubmitMove}
         okText={T[7]}
         destroyOnHidden
-        width={520}
+        width={720}
       >
-        <Form form={form} layout="vertical" initialValues={{ moveType: "IN" }}>
-          <Form.Item name="articleId" label={T[2]} rules={[{ required: true, message: T[2] }]}>
-            <Select
-              showSearch
-              optionFilterProp="label"
-              options={articles.map((a) => ({
-                value: a.id,
-                label: `${a.sku} — ${a.name}`,
-              }))}
-              createRowLabel={C[2]}
-              onCreateRowClick={() => {
-                articleQuickSourceRef.current = "form";
-                articleQuickForm.resetFields();
-                setArticleQuickOpen(true);
-              }}
+        <Form
+          form={form}
+          layout="vertical"
+          initialValues={{
+            movementAt: dayjs(),
+            moveType: "IN",
+            lines: [{ qty: 1, priceIn: 0, priceOut: 0 }],
+          }}
+        >
+          <Form.Item
+            name="movementAt"
+            label={T[33]}
+            rules={[{ required: true, message: T[33] }]}
+          >
+            <DatePicker
+              showTime
+              format="DD/MM/YYYY HH:mm"
+              style={{ width: "100%" }}
             />
           </Form.Item>
           <Form.Item name="moveType" label={T[3]} rules={[{ required: true }]}>
@@ -525,8 +676,109 @@ export default function StockMovements() {
               />
             </Form.Item>
           )}
-          <Form.Item name="qty" label={T[4]} rules={[{ required: true }]}>
-            <InputNumber min={0.01} step={0.01} style={{ width: "100%" }} />
+          <Form.Item label={T[31]}>
+            <Form.List
+              name="lines"
+              rules={[
+                {
+                  validator: async (_, rows) => {
+                    if (!rows || rows.length < 1) {
+                      return Promise.reject(new Error(T[2]));
+                    }
+                  },
+                },
+              ]}
+            >
+              {(fields, { add, remove }, { errors }) => (
+                <>
+                  {fields.map(({ key, name, ...restField }) => (
+                    <Space
+                      key={key}
+                      wrap
+                      align="start"
+                      style={{ width: "100%", marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f0f0f0" }}
+                    >
+                      <Form.Item
+                        {...restField}
+                        label={T[2]}
+                        name={[name, "articleId"]}
+                        rules={[{ required: true, message: T[2] }]}
+                        style={{ minWidth: 220, flex: 1, marginBottom: 0 }}
+                      >
+                        <Select
+                          showSearch
+                          optionFilterProp="label"
+                          options={articles.map((a) => ({
+                            value: a.id,
+                            label: `${a.sku} — ${a.name}`,
+                          }))}
+                          createRowLabel={C[2]}
+                          onCreateRowClick={() => {
+                            articleQuickSourceRef.current = "form";
+                            articleQuickForm.resetFields();
+                            setArticleQuickOpen(true);
+                          }}
+                        />
+                      </Form.Item>
+                      <Form.Item
+                        {...restField}
+                        label={T[4]}
+                        name={[name, "qty"]}
+                        rules={[{ required: true, message: T[4] }]}
+                        style={{ width: 120, marginBottom: 0 }}
+                      >
+                        <InputNumber
+                          min={moveTypeWatch === "ADJ" ? 0 : 0.01}
+                          step={0.01}
+                          style={{ width: "100%" }}
+                        />
+                      </Form.Item>
+                      {moveTypeWatch === "IN" ? (
+                        <Form.Item
+                          {...restField}
+                          label={T[29]}
+                          name={[name, "priceIn"]}
+                          style={{ width: 120, marginBottom: 0 }}
+                        >
+                          <InputNumber min={0} step={0.01} style={{ width: "100%" }} />
+                        </Form.Item>
+                      ) : null}
+                      {moveTypeWatch === "OUT" ? (
+                        <Form.Item
+                          {...restField}
+                          label={T[30]}
+                          name={[name, "priceOut"]}
+                          style={{ width: 120, marginBottom: 0 }}
+                        >
+                          <InputNumber min={0} step={0.01} style={{ width: "100%" }} />
+                        </Form.Item>
+                      ) : null}
+                      {fields.length > 1 ? (
+                        <MinusCircleOutlined
+                          style={{ marginTop: 32, color: "#ff4d4f" }}
+                          onClick={() => remove(name)}
+                        />
+                      ) : null}
+                    </Space>
+                  ))}
+                  <Form.ErrorList errors={errors} />
+                  <Button
+                    type="dashed"
+                    onClick={() =>
+                      add({
+                        qty: 1,
+                        ...(moveTypeWatch === "IN" ? { priceIn: 0 } : {}),
+                        ...(moveTypeWatch === "OUT" ? { priceOut: 0 } : {}),
+                      })
+                    }
+                    block
+                    icon={<PlusOutlined />}
+                  >
+                    {T[32]}
+                  </Button>
+                </>
+              )}
+            </Form.List>
           </Form.Item>
           <Form.Item name="reason" label={T[5]}>
             <Input />

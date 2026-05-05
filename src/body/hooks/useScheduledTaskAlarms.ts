@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { getPageTexts } from "../../hooks/usePageTexts";
-import { loadScheduledTasks, saveScheduledTasks, type ScheduledTask } from "../utils/scheduledTasksStore";
+import type { SessionUser } from "../context/SessionContext";
+import { fetchStockCollabTasks } from "../../lib/stockApi";
+import { getReminderTasks, mapCollabRowToScheduledTask } from "../utils/scheduledTasksStore";
 
 function showTaskNotification(title: string, body: string) {
   if (typeof Notification === "undefined") return;
@@ -14,47 +16,54 @@ function showTaskNotification(title: string, body: string) {
 }
 
 /**
- * Vérifie régulièrement les tâches dont l'heure est passée et envoie une notification système.
+ * Vérifie régulièrement les rappels dont l’heure est passée et envoie une notification système.
+ * Les tâches restent dans la liste jusqu’à ce que l’utilisateur les coche comme faites dans la modale.
  */
-export function useScheduledTaskAlarms(pollMs = 15000) {
+export function useScheduledTaskAlarms(session: SessionUser | null, pollMs = 15000) {
   const notifiedIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    const tick = () => {
+    const tick = async () => {
       const now = Date.now();
-      const tasks = loadScheduledTasks();
-      const remaining: ScheduledTask[] = [];
+      const local = getReminderTasks();
+      const merged: { id: string; title: string; at: string; kind?: string }[] = local.map((t) => ({
+        id: t.id,
+        title: t.title,
+        at: t.at,
+        kind: t.kind,
+      }));
+      if (session?.id && (session.role === "stock_user" || session.role === "sadmin")) {
+        try {
+          const srv = await fetchStockCollabTasks({
+            requesterUserId: session.id,
+            requesterRole: session.role ?? "",
+          });
+          for (const row of srv) {
+            const m = mapCollabRowToScheduledTask(row);
+            merged.push({ id: m.id, title: m.title, at: m.at, kind: m.kind });
+          }
+        } catch {
+          /* hors ligne */
+        }
+      }
       const T = getPageTexts("stockScheduledTasks");
       const notifTitle = T[9] ?? "Rappel";
 
-      for (const t of tasks) {
+      for (const t of merged) {
+        if (t.kind === "low_stock") continue;
         const ts = new Date(t.at).getTime();
-        if (Number.isNaN(ts)) {
-          remaining.push(t);
-          continue;
-        }
+        if (Number.isNaN(ts)) continue;
         if (now >= ts) {
           if (!notifiedIds.current.has(t.id)) {
             notifiedIds.current.add(t.id);
             showTaskNotification(notifTitle, t.title.trim() || T[2] || "Tâche");
           }
-        } else {
-          remaining.push(t);
         }
-      }
-
-      if (remaining.length !== tasks.length) {
-        saveScheduledTasks(remaining);
-        tasks
-          .filter((t) => new Date(t.at).getTime() <= now && !Number.isNaN(new Date(t.at).getTime()))
-          .forEach((t) => {
-            setTimeout(() => notifiedIds.current.delete(t.id), 60_000);
-          });
       }
     };
 
-    tick();
-    const id = window.setInterval(tick, pollMs);
+    void tick();
+    const id = window.setInterval(() => void tick(), pollMs);
     return () => window.clearInterval(id);
-  }, [pollMs]);
+  }, [pollMs, session?.id, session?.role]);
 }

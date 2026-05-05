@@ -4,8 +4,12 @@ export type SessionUser = {
   id: string;
   loginOrLabel: string;
   role?: string;
-  /** Comptes créés dans Stock (Mon compte) — écrans autorisés. Absent pour sadmin ou compte principal. */
+  /** Comptes créés dans Stock (écran Collaborateur) — écrans autorisés. Absent pour sadmin ou compte principal. */
   stockPrivileges?: string[];
+  /** Adresse enregistrée pour les comptes utilisateur stock (facultatif). */
+  address?: string;
+  /** Rôle métier (`stock_role`) pour les comptes stock. */
+  stockRoleId?: string;
 };
 
 const SessionContext = createContext<{

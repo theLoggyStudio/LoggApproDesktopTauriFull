@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Card, Input, Popconfirm, Space, Tag, Typography, message, theme } from "antd";
 import { Button, Modal, Table } from "../../../items";
-import { DeleteOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined } from "@ant-design/icons";
+import {
+  DeleteOutlined,
+  DownloadOutlined,
+  UploadOutlined,
+  ReloadOutlined,
+  PrinterOutlined,
+} from "@ant-design/icons";
+import dayjs from "dayjs";
 import type { ColumnsType } from "antd/es/table";
 import { usePageTexts, getPageTexts } from "../../../hooks/usePageTexts";
 import { useSession } from "../../context/SessionContext";
 import {
   canPreviewStockDocument,
+  canPrintStockDocuments,
   canViewStockDocuments,
   hasStockPrivilege,
 } from "../../utils/stockPrivileges";
@@ -17,6 +25,9 @@ import {
   importStockDocument,
   type StockDocumentRow,
 } from "../../../lib/stockApi";
+import { StockPrintModal } from "./StockPrintModal";
+import { buildPrintTableHtml, sortByIsoDate } from "../../utils/stockBrowserPrint";
+import { printStockListWithOptionalTemplate } from "../../utils/stockListPrintWithTemplate";
 
 const { Title, Text } = Typography;
 
@@ -45,8 +56,9 @@ function exportDownloadName(originalName: string, kind: string): string {
   return `${originalName}.${ext}`;
 }
 
-export default function StockDocuments() {
+export default function StockDocumentsList() {
   const T = usePageTexts("stockDocuments");
+  const Prt = usePageTexts("stockPrint");
   const okDel = getPageTexts("stockArticles")[15];
   const cancelDel = getPageTexts("stockArticles")[16];
   const { session } = useSession();
@@ -58,6 +70,7 @@ export default function StockDocuments() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const previewUrlRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [printOpen, setPrintOpen] = useState(false);
 
   const canImportAny =
     hasStockPrivilege(session, "documents_import_png") ||
@@ -65,6 +78,7 @@ export default function StockDocuments() {
     hasStockPrivilege(session, "documents_import_pdf");
 
   const canView = useMemo(() => canViewStockDocuments(session), [session]);
+  const canPrint = useMemo(() => canPrintStockDocuments(session), [session]);
 
   const load = useCallback(() => {
     if (!canView) {
@@ -271,14 +285,50 @@ export default function StockDocuments() {
     !!session &&
     canPreviewStockDocument(session, previewKind ?? "");
 
+  const runPrint = async (listKey: string, sort: "asc" | "desc", modelId: string) => {
+    if (listKey !== "docs") return false;
+    const sorted = sortByIsoDate(rows, "createdAt", sort);
+    const headers = [T[5], T[6], T[7], T[8], T[29]];
+    const bodyRows = sorted.map((r) => [
+      r.originalName,
+      (r.kind ?? "").toUpperCase(),
+      formatBytes(r.bytes),
+      r.createdAt ? dayjs(r.createdAt).format("DD/MM/YYYY HH:mm") : "",
+      (r.movementCaption ?? "").trim() || "—",
+    ]);
+    return await printStockListWithOptionalTemplate(
+      "docs",
+      `${T[0]} — ${Prt[0]}`,
+      buildPrintTableHtml(T[30] ?? T[0], headers, bodyRows),
+      modelId,
+    );
+  };
+
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      <div>
-        <Title level={3} style={{ margin: 0 }}>
-          {T[0]}
-        </Title>
-        <Text type="secondary">{T[1]}</Text>
-      </div>
+      <Space align="start" style={{ width: "100%", justifyContent: "space-between" }}>
+        <div>
+          <Title level={3} style={{ margin: 0 }}>
+            {T[0]}
+          </Title>
+          <Text type="secondary">{T[1]}</Text>
+        </div>
+        <Button
+          icon={<PrinterOutlined />}
+          disabled={!canPrint}
+          onClick={() => {
+            if (canPrint) setPrintOpen(true);
+          }}
+        >
+          {Prt[0] ?? "Imprimer"}
+        </Button>
+      </Space>
+      <StockPrintModal
+        open={printOpen}
+        onClose={() => setPrintOpen(false)}
+        lists={[{ value: "docs", label: T[30] ?? T[0] }]}
+        onPrint={runPrint}
+      />
 
       {!canView && session ? <Alert type="warning" showIcon message={T[29]} style={{ marginBottom: 16 }} /> : null}
 
