@@ -9,6 +9,7 @@ import {
   deleteStockAppUser,
   fetchStockAppUsers,
   fetchStockRoles,
+  updateStockOwnProfile,
   upsertStockAppUser,
   upsertStockRole,
   type StockAppUserRow,
@@ -24,25 +25,46 @@ export default function StockUserPage() {
   const U = usePageTexts("stockUserAdmin");
   const R = usePageTexts("stockRoles");
   const C = usePageTexts("stockSelectCreateRow");
-  const { session } = useSession();
+  const { session, setSession } = useSession();
   const { token } = theme.useToken();
   const { privLabel } = useStockAdminPrivilegeGroups();
   const [rows, setRows] = useState<StockAppUserRow[]>([]);
   const [roles, setRoles] = useState<StockRoleRow[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [roleQuickOpen, setRoleQuickOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [roleQuickForm] = Form.useForm<{ name: string; code?: string; description?: string }>();
+  const [profileForm] = Form.useForm<{
+    displayName: string;
+    email: string;
+    address: string;
+    currentPassword: string;
+    newPassword: string;
+  }>();
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form] = Form.useForm<{
     login: string;
     displayName: string;
+    email: string;
     address: string;
     roleId?: string;
     password: string;
   }>();
 
+  const emailFieldRules = [
+    {
+      validator: (_: unknown, v: string) => {
+        const s = (v ?? "").trim();
+        if (!s) return Promise.resolve();
+        if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) return Promise.resolve();
+        return Promise.reject(new Error(T[15]));
+      },
+    },
+  ];
+
   const isSadmin = session?.role === "sadmin";
+  const isStockUser = session?.role === "stock_user";
 
   const okDel = getPageTexts("stockArticles")[15];
   const cancelDel = getPageTexts("stockArticles")[16];
@@ -75,6 +97,7 @@ export default function StockUserPage() {
           form.setFieldsValue({
             login: row.login,
             displayName: row.displayName,
+            email: row.email ?? "",
             address: row.address ?? "",
             roleId: row.roleId?.trim() || undefined,
             password: "",
@@ -106,6 +129,7 @@ export default function StockUserPage() {
         id: editingId ?? undefined,
         login: v.login.trim(),
         displayName: v.displayName.trim(),
+        email: v.email?.trim() ?? "",
         address: v.address?.trim() ?? "",
         roleId: v.roleId?.trim() || undefined,
         password: v.password?.trim() || undefined,
@@ -155,6 +179,7 @@ export default function StockUserPage() {
     const v = form.getFieldsValue() as {
       login: string;
       displayName: string;
+      email: string;
       address: string;
       roleId?: string;
       password: string;
@@ -164,11 +189,56 @@ export default function StockUserPage() {
     form.setFieldsValue({
       login: login ? `${login}${sfx}` : "",
       displayName: (v.displayName ?? "").trim(),
+      email: (v.email ?? "").trim(),
       address: (v.address ?? "").trim(),
       roleId: v.roleId,
       password: "",
     });
     setEditingId(null);
+  };
+
+  const openProfileEdit = () => {
+    profileForm.setFieldsValue({
+      displayName: session?.loginOrLabel ?? "",
+      email: session?.email ?? "",
+      address: session?.address ?? "",
+      currentPassword: "",
+      newPassword: "",
+    });
+    setProfileOpen(true);
+  };
+
+  const onSaveProfile = async () => {
+    const v = await profileForm.validateFields().catch(() => null);
+    if (!v || !session?.id) return;
+    try {
+      const res = await updateStockOwnProfile({
+        requesterUserId: session.id,
+        requesterRole: "stock_user",
+        id: session.id,
+        currentPassword: v.currentPassword.trim(),
+        displayName: v.displayName.trim(),
+        email: v.email?.trim() ?? "",
+        address: (v.address ?? "").trim(),
+        newPassword: v.newPassword?.trim() || undefined,
+      });
+      message.success(T[11] ?? "Profil mis à jour.");
+      setSession({
+        ...session,
+        loginOrLabel: res.loginOrLabel ?? session.loginOrLabel,
+        email: res.email?.trim() || (v.email ?? "").trim() || undefined,
+        address: res.address ?? (v.address ?? "").trim(),
+      });
+      setProfileOpen(false);
+      profileForm.resetFields();
+    } catch (e) {
+      const msg = String(e);
+      if (msg.includes("incorrect") || msg.includes("Incorrect")) {
+        message.error(T[12] ?? msg);
+      } else {
+        message.error(msg);
+      }
+    }
   };
 
   const onDelete = async (id: string) => {
@@ -184,10 +254,16 @@ export default function StockUserPage() {
   };
 
   const columns: ColumnsType<StockAppUserRow> = [
-    { title: U[3], dataIndex: "login", key: "login", ellipsis: true },
-    { title: U[4], dataIndex: "displayName", key: "displayName", ellipsis: true },
-    { title: T[3], dataIndex: "roleId", key: "roleId", width: 160, ellipsis: true, render: (_: unknown, r) => roleLabel(r.roleId) },
-    { title: T[7], dataIndex: "address", key: "address", ellipsis: true, width: 200 },
+    { title: U[3], dataIndex: "login", key: "login" },
+    { title: U[4], dataIndex: "displayName", key: "displayName" },
+    {
+      title: T[14],
+      dataIndex: "email",
+      key: "email",
+      render: (v?: string) => (v?.trim() ? v : <Text type="secondary">—</Text>),
+    },
+    { title: T[3], dataIndex: "roleId", key: "roleId", width: 160, render: (_: unknown, r) => roleLabel(r.roleId) },
+    { title: T[7], dataIndex: "address", key: "address", width: 200 },
     {
       title: U[5],
       dataIndex: "privileges",
@@ -230,18 +306,30 @@ export default function StockUserPage() {
             <Text code>{session.id}</Text>
           </Descriptions.Item>
           {session.role === "stock_user" ? (
-            <Descriptions.Item label={T[7]}>
-              {session.address?.trim() ? (
-                <Text style={{ whiteSpace: "pre-wrap" }}>{session.address}</Text>
-              ) : (
-                <Text type="secondary">—</Text>
-              )}
-            </Descriptions.Item>
+            <>
+              <Descriptions.Item label={T[14]}>
+                {session.email?.trim() ? session.email : <Text type="secondary">—</Text>}
+              </Descriptions.Item>
+              <Descriptions.Item label={T[7]}>
+                {session.address?.trim() ? (
+                  <Text style={{ whiteSpace: "pre-wrap" }}>{session.address}</Text>
+                ) : (
+                  <Text type="secondary">—</Text>
+                )}
+              </Descriptions.Item>
+            </>
           ) : null}
         </Descriptions>
         <Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
           {T[6]}
         </Paragraph>
+        {isStockUser ? (
+          <div style={{ marginTop: 16 }}>
+            <Button type="primary" onClick={openProfileEdit}>
+              {T[8] ?? "Modifier mon profil"}
+            </Button>
+          </div>
+        ) : null}
       </Card>
 
       {isSadmin ? (
@@ -317,6 +405,9 @@ export default function StockUserPage() {
           <Form.Item name="displayName" label={U[4]}>
             <Input />
           </Form.Item>
+          <Form.Item name="email" label={U[78]} rules={emailFieldRules}>
+            <Input type="email" autoComplete="email" allowClear />
+          </Form.Item>
           <Form.Item name="roleId" label={T[3]}>
             <Select
               allowClear
@@ -339,6 +430,42 @@ export default function StockUserPage() {
           </Form.Item>
           <Form.Item name="password" label={U[6]} extra={editingId ? U[24] : undefined}>
             <Input.Password autoComplete="new-password" placeholder={editingId ? U[24] : `(${STOCK_DEFAULT_INITIAL_PASSWORD})`} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={T[8] ?? "Profil"}
+        open={profileOpen}
+        onCancel={() => {
+          setProfileOpen(false);
+          profileForm.resetFields();
+        }}
+        onOk={() => void onSaveProfile()}
+        okText={T[10] ?? U[7]}
+        cancelText={U[8]}
+        destroyOnHidden
+        width={480}
+      >
+        <Form form={profileForm} layout="vertical">
+          <Form.Item name="displayName" label={U[4]} rules={[{ required: true, message: U[12] }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="email" label={T[14]} rules={emailFieldRules}>
+            <Input type="email" autoComplete="email" allowClear />
+          </Form.Item>
+          <Form.Item name="address" label={T[7]}>
+            <Input.TextArea rows={3} />
+          </Form.Item>
+          <Form.Item
+            name="currentPassword"
+            label={T[9] ?? "Mot de passe actuel"}
+            rules={[{ required: true, message: T[9] ?? "" }]}
+          >
+            <Input.Password autoComplete="current-password" />
+          </Form.Item>
+          <Form.Item name="newPassword" label={T[13] ?? U[6]} extra={U[24]}>
+            <Input.Password autoComplete="new-password" />
           </Form.Item>
         </Form>
       </Modal>

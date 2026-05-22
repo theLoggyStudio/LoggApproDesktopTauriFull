@@ -21,6 +21,13 @@ export type ScheduledTask = {
   /** Tâches circuit (`circuit_fill` / `circuit_validate`). */
   circuitId?: string;
   circuitStepIndex?: number;
+  history?: Array<{
+    action: string;
+    note: string;
+    actorUserId: string;
+    actorRoleId: string;
+    at: string;
+  }>;
 };
 
 const KEY = "loggappro_scheduled_tasks_v1";
@@ -98,6 +105,7 @@ export function mapCollabRowToScheduledTask(row: StockCollabTaskRow): ScheduledT
       typeof row.circuitStepIndex === "number" && !Number.isNaN(row.circuitStepIndex)
         ? row.circuitStepIndex
         : undefined,
+    history: row.history ?? [],
   };
 }
 

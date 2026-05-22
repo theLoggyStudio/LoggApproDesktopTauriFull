@@ -35,6 +35,7 @@ import { buildPrintTableHtml, sortByIsoDate } from "../../utils/stockBrowserPrin
 import { printStockListWithOptionalTemplate } from "../../utils/stockListPrintWithTemplate";
 
 const { Title, Text } = Typography;
+const { RangePicker } = DatePicker;
 
 const RECEIPT_MAX_BYTES = 12 * 1024 * 1024;
 
@@ -74,6 +75,8 @@ export default function StockMovements() {
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [loading, setLoading] = useState(false);
   const [filterArticleId, setFilterArticleId] = useState<string | undefined>();
+  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
+  const [filterMoveType, setFilterMoveType] = useState<string | undefined>();
   const [modalOpen, setModalOpen] = useState(false);
   const [detailMovement, setDetailMovement] = useState<StockMovement | null>(null);
   const [suppliers, setSuppliers] = useState<{ value: string }[]>([]);
@@ -125,7 +128,12 @@ export default function StockMovements() {
   const loadMoves = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await fetchMovements(filterArticleId);
+      const list = await fetchMovements({
+        articleId: filterArticleId,
+        dateFrom: dateRange?.[0]?.format("YYYY-MM-DD"),
+        dateTo: dateRange?.[1]?.format("YYYY-MM-DD"),
+        moveType: filterMoveType,
+      });
       setMovements(list);
       setDetailMovement((prev) => {
         if (!prev) return prev;
@@ -136,7 +144,7 @@ export default function StockMovements() {
     } finally {
       setLoading(false);
     }
-  }, [filterArticleId]);
+  }, [filterArticleId, dateRange, filterMoveType]);
 
   const uploadReceiptForMovement = useCallback(
     async (file: File, movementId: string): Promise<boolean> => {
@@ -374,7 +382,7 @@ export default function StockMovements() {
       render: (s: string) => (s ? dayjs(s).format("DD/MM/YYYY HH:mm") : ""),
     },
     { title: skuLabel, dataIndex: "sku", key: "sku", width: 110 },
-    { title: T[2], dataIndex: "articleName", key: "articleName", ellipsis: true },
+    { title: T[2], dataIndex: "articleName", key: "articleName" },
     {
       title: T[3],
       dataIndex: "moveType",
@@ -405,10 +413,9 @@ export default function StockMovements() {
       title: tiersTitle,
       key: "tiers",
       width: 160,
-      ellipsis: true,
       render: (_, r) => tiersCell(r),
     },
-    { title: T[5], dataIndex: "reason", key: "reason", ellipsis: true },
+    { title: T[5], dataIndex: "reason", key: "reason" },
     { title: T[6], dataIndex: "refDoc", key: "refDoc", width: 120 },
     {
       title: T[21],
@@ -445,7 +452,7 @@ export default function StockMovements() {
         onPrint={runPrint}
       />
       <Space wrap style={{ marginBottom: 16, width: "100%", justifyContent: "space-between" }}>
-        <Space>
+        <Space wrap align="center">
           <Text type="secondary">{T[8]}</Text>
           <Select
             allowClear
@@ -461,6 +468,31 @@ export default function StockMovements() {
               setArticleQuickOpen(true);
             }}
           />
+          <Text type="secondary">{T[34] ?? "Période"}</Text>
+          <RangePicker
+            value={dateRange}
+            onChange={(v) => setDateRange(v)}
+            format="DD/MM/YYYY"
+            placeholder={[T[35] ?? "Du", T[36] ?? "au"]}
+          />
+          <Text type="secondary">{T[37] ?? "Type"}</Text>
+          <Select
+            allowClear
+            placeholder={T[38] ?? "Tous les types"}
+            style={{ minWidth: 140 }}
+            value={filterMoveType}
+            onChange={(v) => setFilterMoveType(v)}
+            options={moveOptions}
+          />
+          <Button
+            onClick={() => {
+              setFilterArticleId(undefined);
+              setDateRange(null);
+              setFilterMoveType(undefined);
+            }}
+          >
+            {T[39] ?? "Réinitialiser"}
+          </Button>
         </Space>
         <Space wrap>
           <StockDataIoBar
@@ -496,7 +528,6 @@ export default function StockMovements() {
         loading={loading}
         columns={columns}
         dataSource={movements}
-        scroll={{ x: 1380 }}
         onRow={(record) => ({
           onClick: () => setDetailMovement(record),
           style: { cursor: "pointer" },
@@ -561,7 +592,7 @@ export default function StockMovements() {
                 }
                 columns={[
                   { title: skuLabel, dataIndex: "sku", width: 110 },
-                  { title: T[2], dataIndex: "articleName", ellipsis: true },
+                  { title: T[2], dataIndex: "articleName" },
                   { title: T[4], dataIndex: "qty", width: 88 },
                   {
                     title: T[29],

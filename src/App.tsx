@@ -31,7 +31,6 @@ const StockCircuitList = lazy(() => import("./body/Pages/stock/StockCircuitList"
 const StockCircuitEditor = lazy(() => import("./body/Pages/stock/StockCircuitEditor"));
 const StockFormTemplatesList = lazy(() => import("./body/Pages/stock/StockFormTemplatesList"));
 const StockFormTemplateEditor = lazy(() => import("./body/Pages/stock/StockFormTemplateEditor"));
-const StockCircuitFillPage = lazy(() => import("./body/Pages/stock/StockCircuitFillPage"));
 
 const routerFutureFlags = { v7_startTransition: true, v7_relativeSplatPath: true };
 
@@ -82,7 +81,6 @@ function AppContent() {
               <Route path="forms" element={<StockFormTemplatesList />} />
               <Route path="forms/new" element={<StockFormTemplateEditor />} />
               <Route path="forms/:templateId/edit" element={<StockFormTemplateEditor />} />
-              <Route path="fill" element={<StockCircuitFillPage />} />
               <Route path="new" element={<StockCircuitEditor />} />
               <Route path=":circuitId/edit" element={<StockCircuitEditor />} />
             </Route>

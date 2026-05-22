@@ -320,7 +320,7 @@ export default function StockArticleList() {
   const columns = useMemo((): ColumnsType<StockArticle> => {
     const base: ColumnsType<StockArticle> = [
       { title: T[3], dataIndex: "sku", key: "sku", width: 110 },
-      { title: T[4], dataIndex: "name", key: "name", ellipsis: true },
+      { title: T[4], dataIndex: "name", key: "name" },
       { title: T[5], dataIndex: "category", key: "category", width: 120 },
       { title: T[6], dataIndex: "unit", key: "unit", width: 72 },
       {
@@ -359,7 +359,6 @@ export default function StockArticleList() {
         dataIndex: "currency",
         key: "currency",
         width: 88,
-        ellipsis: true,
         render: (c: string | undefined) => ((c ?? "").trim() || "—") as string,
       },
     ];
@@ -368,7 +367,6 @@ export default function StockArticleList() {
         title: T[9],
         dataIndex: "location",
         key: "location",
-        ellipsis: true,
         render: (loc: string) => {
           const s = (loc ?? "").trim();
           if (!s) return "—";
@@ -466,7 +464,6 @@ export default function StockArticleList() {
         loading={loading}
         columns={columns}
         dataSource={rows}
-        scroll={{ x: 820 }}
         onRow={(record) => ({
           onClick: () => openEdit(record),
           style: { cursor: "pointer" },

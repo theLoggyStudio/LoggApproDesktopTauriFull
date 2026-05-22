@@ -71,7 +71,8 @@
       "Stocks par catégorie (quantités)",
       "Imprimer : derniers mouvements",
       "Imprimer : stocks par catégorie",
-      "Imprimer"
+      "Imprimer",
+      "Voir tous les mouvements"
     ],
     "stockDataIo": [
       "Importer (CSV)",
@@ -137,7 +138,12 @@
       "Libellé requis.",
       "Créez d'abord un entrepôt (menu « Entrepôt »), puis réessayez.",
       "Aucun entrepôt : utilisez le bouton « Nouvel entrepôt » pour en ajouter un.",
-      "Imprimer : entrepôts"
+      "Imprimer : entrepôts",
+      "Modifier l’entrepôt",
+      "Supprimer l’entrepôt",
+      "Entrepôt modifié.",
+      "Entrepôt supprimé.",
+      "Supprimer cet entrepôt ? Les emplacements associés doivent être supprimés au préalable."
     ],
     "stockArticleUnits": [
       "Unités de mesure",
@@ -280,7 +286,13 @@
       "Prix sortie (unit.)",
       "Articles du mouvement",
       "Ajouter un article",
-      "Date et heure du mouvement"
+      "Date et heure du mouvement",
+      "Période",
+      "Du",
+      "au",
+      "Filtrer par type",
+      "Tous les types",
+      "Réinitialiser les filtres"
     ],
     "stockSettingsDb": [
       "Connexion base distante",
@@ -329,7 +341,9 @@
       "Adresse",
       "L'adresse est obligatoire pour un fournisseur.",
       "Créé le",
-      "Imprimer : fournisseurs"
+      "Imprimer : fournisseurs",
+      "Téléphone",
+      "E-mail"
     ],
     "stockClients": [
       "Clients",
@@ -346,7 +360,9 @@
       "Adresse",
       "L'adresse est obligatoire pour un client.",
       "Créé le",
-      "Imprimer : clients"
+      "Imprimer : clients",
+      "Téléphone",
+      "E-mail"
     ],
     "stockCommon": [
       "Dupliquer",
@@ -427,7 +443,15 @@
       "Référence interne",
       "Aucun rôle",
       "Pour vous connecter avec un autre compte, utilisez le bouton de déconnexion dans la barre supérieure.",
-      "Adresse"
+      "Adresse",
+      "Modifier mon profil",
+      "Mot de passe actuel",
+      "Enregistrer le profil",
+      "Profil mis à jour.",
+      "Le mot de passe actuel est incorrect.",
+      "Nouveau mot de passe (facultatif, min. 8 caractères)",
+      "E-mail",
+      "Adresse e-mail invalide."
     ],
     "stockUserAdmin": [
       "Gestion des utilisateurs locaux",
@@ -507,7 +531,13 @@
       "Gérer les rôles (création, modification, suppression)",
       "Circuits — droits",
       "Rôles — droits",
-      "Les droits effectifs viennent du rôle assigné. Pour les modifier, ouvrez la page « Rôles collaborateurs »."
+      "Les droits effectifs viennent du rôle assigné. Pour les modifier, ouvrez la page « Rôles collaborateurs ».",
+      "Modèles d’impression — édition (HTML/CSS)",
+      "Articles — unités de mesure",
+      "Articles — catégories",
+      "Articles — devises",
+      "Documents — modèles d’impression (liste)",
+      "Circuits — formulaires (modèles)"
     ],
     "stockCircuits": [
       "Circuits",
@@ -553,7 +583,16 @@
       "Choisir un modèle à imbriquer",
       "Champs importés.",
       "Imprimer la structure des formulaires",
-      "Sélectionnez un modèle dans la liste."
+      "Sélectionnez un modèle dans la liste.",
+      "Fournisseur (sélection stock)",
+      "Client (sélection stock)",
+      "Mouvement (sélection stock)",
+      "Document (sélection stock)",
+      "Entrepôt (sélection stock)",
+      "Emplacement (sélection stock)",
+      "Circuit (sélection stock)",
+      "Rôle (sélection stock)",
+      "Si aucun rôle n’est sélectionné, le rôle Direction (créé à l’installation) est appliqué automatiquement pour remplir ce formulaire ou valider l’étape précédente."
     ],
     "stockFormTemplates": [
       "Modèles de formulaires",
@@ -572,7 +611,10 @@
       "Champs importés depuis le modèle choisi.",
       "Nom requis.",
       "Modèle enregistré.",
-      "Ce modèle est fourni par l’application ; les champs ne sont pas modifiables."
+      "Ce modèle est fourni par l’application ; les champs ne sont pas modifiables.",
+      "Écran",
+      "Générique (circuit / autre)",
+      "Type d’écran requis."
     ],
     "stockCircuitFill": [
       "Remplir un formulaire",

@@ -6,6 +6,8 @@ export type SessionUser = {
   role?: string;
   /** Comptes créés dans Stock (écran Collaborateur) — écrans autorisés. Absent pour sadmin ou compte principal. */
   stockPrivileges?: string[];
+  /** E-mail de contact (facultatif). */
+  email?: string;
   /** Adresse enregistrée pour les comptes utilisateur stock (facultatif). */
   address?: string;
   /** Rôle métier (`stock_role`) pour les comptes stock. */

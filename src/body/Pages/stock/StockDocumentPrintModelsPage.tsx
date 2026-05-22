@@ -5,7 +5,7 @@ import { useNavigate } from "react-router-dom";
 import type { ColumnsType } from "antd/es/table";
 import { Button, Loading, Modal, Table } from "../../../items";
 import { getPageTexts, usePageTexts } from "../../../hooks/usePageTexts";
-import { useSession, type SessionUser } from "../../context/SessionContext";
+import { useSession } from "../../context/SessionContext";
 import {
   deleteStockDocumentPrintModel,
   fetchStockDocumentPrintModel,
@@ -13,21 +13,13 @@ import {
   type StockDocumentPrintModelDetail,
   type StockDocumentPrintModelRow,
 } from "../../../lib/stockApi";
-import { hasStockPrivilege, canViewStockDocuments } from "../../utils/stockPrivileges";
+import { canViewDocumentPrintModels, canEditDocumentPrintModels } from "../../utils/stockPrivileges";
 import { DOCUMENT_PRINT_SCREEN_KEYS, type DocumentPrintScreenKey } from "../../utils/stockListPrintWithTemplate";
 import { substituteMustache } from "../../utils/stockPrintTemplateVariables";
 import { exportFullHtmlDocumentPdf } from "../../utils/stockBrowserPrint";
+import { buildA4HtmlDocument, wrapPrintModelHtml } from "../../utils/stockPrintA4";
 
 const { Text } = Typography;
-
-function canEditPrintModels(session: SessionUser | null): boolean {
-  if (!session) return false;
-  return (
-    hasStockPrivilege(session, "documents_import_png") ||
-    hasStockPrivilege(session, "documents_import_jpeg") ||
-    hasStockPrivilege(session, "documents_import_pdf")
-  );
-}
 
 export default function StockDocumentPrintModelsPage() {
   const T = usePageTexts("stockDocumentPrintModels");
@@ -36,8 +28,8 @@ export default function StockDocumentPrintModelsPage() {
   const cancelLabel = roleTx[7];
   const { session } = useSession();
   const navigate = useNavigate();
-  const canView = canViewStockDocuments(session);
-  const canEdit = canEditPrintModels(session);
+  const canView = canViewDocumentPrintModels(session);
+  const canEdit = canEditDocumentPrintModels(session);
   const [rows, setRows] = useState<StockDocumentPrintModelRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailRow, setDetailRow] = useState<StockDocumentPrintModelRow | null>(null);
@@ -99,8 +91,8 @@ export default function StockDocumentPrintModelsPage() {
           </Button>
         ),
       },
-      { title: Tx[4], dataIndex: "name", key: "name", ellipsis: true },
-      { title: Tx[5], dataIndex: "description", key: "description", ellipsis: true },
+      { title: Tx[4], dataIndex: "name", key: "name" },
+      { title: Tx[5], dataIndex: "description", key: "description" },
     ];
     return c;
   }, [screenLabel]);
@@ -151,7 +143,7 @@ export default function StockDocumentPrintModelsPage() {
     };
     const body = substituteMustache(screenPreview.htmlContent ?? "", map);
     const style = substituteMustache(screenPreview.cssContent ?? "", map);
-    return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/><style>body{margin:0;padding:12px;background:#f3f4f6}.a4{width:210mm;min-height:297mm;margin:0 auto;background:#fff;box-shadow:0 0 0 1px #d1d5db;overflow:hidden}${style}</style></head><body><div class="a4">${body}</div></body></html>`;
+    return wrapPrintModelHtml(body, style);
   }, [screenPreview]);
 
   const closeDetail = () => setDetailRow(null);
@@ -170,7 +162,9 @@ export default function StockDocumentPrintModelsPage() {
       "date.heure": new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
       "liste.contenu": "<table><tr><td>Aperçu de contenu liste</td></tr></table>",
     };
-    const full = `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/><style>${substituteMustache(d.cssContent ?? "", map)}</style></head><body>${substituteMustache(d.htmlContent ?? "", map)}</body></html>`;
+    const body = substituteMustache(d.htmlContent ?? "", map);
+    const style = substituteMustache(d.cssContent ?? "", map);
+    const full = buildA4HtmlDocument(d.name || "modele", body, style);
     const out = await exportFullHtmlDocumentPdf(d.name || "modele", full);
     if (out) Modal.success({ title: `${out} créé avec succès` });
   }, []);
@@ -354,7 +348,7 @@ export default function StockDocumentPrintModelsPage() {
             style={{ width: 360 }}
             dataSource={modelsForScreen}
             locale={{ emptyText: T[15] }}
-            columns={[{ title: T[4], dataIndex: "name", key: "name", ellipsis: true }]}
+            columns={[{ title: T[4], dataIndex: "name", key: "name" }]}
             onRow={(r) => ({
               onClick: () => setSelectedScreenModelId(r.id),
               style: {

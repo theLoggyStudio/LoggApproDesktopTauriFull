@@ -10,3 +10,18 @@ body {
   margin: 0;
   min-width: 320px;
 }
+
+/* Tableaux Ant Design : retours à la ligne aux espaces (pas de scroll horizontal forcé) */
+.ant-table table {
+  table-layout: auto;
+}
+
+.ant-table .ant-table-thead > tr > th.ant-table-cell,
+.ant-table .ant-table-tbody > tr > td.ant-table-cell {
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: break-word;
+  hyphens: auto;
+  line-height: 1.45;
+  vertical-align: top;
+}

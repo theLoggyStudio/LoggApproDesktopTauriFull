@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card, Col, Form, Input, Row, Select, Space, Typography, message } from "antd";
+import { CopyOutlined } from "@ant-design/icons";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button, Loading } from "../../../items";
 import { getPageTexts, usePageTexts } from "../../../hooks/usePageTexts";
@@ -9,7 +10,7 @@ import {
   upsertStockDocumentPrintModel,
   type StockDocumentPrintModelDetail,
 } from "../../../lib/stockApi";
-import { hasStockPrivilege, canViewStockDocuments } from "../../utils/stockPrivileges";
+import { canViewDocumentPrintModels, canEditDocumentPrintModels } from "../../utils/stockPrivileges";
 import {
   STOCK_PRINT_TEMPLATE_VARIABLES,
   extractPlaceholderKeys,
@@ -18,6 +19,7 @@ import {
 } from "../../utils/stockPrintTemplateVariables";
 import { MustacheVariableTextarea } from "./MustacheVariableTextarea";
 import { DOCUMENT_PRINT_SCREEN_KEYS, type DocumentPrintScreenKey } from "../../utils/stockListPrintWithTemplate";
+import { A4_CONTENT_WIDTH_PX, wrapPrintModelHtml } from "../../utils/stockPrintA4";
 
 const { Text, Title } = Typography;
 
@@ -26,18 +28,9 @@ const DEFAULT_HTML = `<div class="page">
   <p class="sub">{{ sousTitre }}</p>
 </div>`;
 
-const DEFAULT_CSS = `.page { font-family: system-ui, sans-serif; padding: 24px; max-width: 720px; margin: 0 auto; }
+const DEFAULT_CSS = `.page { font-family: system-ui, sans-serif; width: ${A4_CONTENT_WIDTH_PX}px; box-sizing: border-box; margin: 0; padding: 0; }
 h1 { margin: 0 0 8px; font-size: 22px; }
 .sub { color: #555; margin: 0; font-size: 14px; }`;
-
-function canEditPrintModels(session: SessionUser | null): boolean {
-  if (!session) return false;
-  return (
-    hasStockPrivilege(session, "documents_import_png") ||
-    hasStockPrivilege(session, "documents_import_jpeg") ||
-    hasStockPrivilege(session, "documents_import_pdf")
-  );
-}
 
 function demoValueForKey(key: string): string {
   const map: Record<string, string> = {
@@ -99,8 +92,8 @@ export default function StockDocumentPrintModelEditor() {
   const [searchParams, setSearchParams] = useSearchParams();
   const skipNewResetAfterClone = useRef(false);
   const { session } = useSession();
-  const canView = canViewStockDocuments(session);
-  const canEdit = canEditPrintModels(session);
+  const canView = canViewDocumentPrintModels(session);
+  const canEdit = canEditDocumentPrintModels(session);
   const isNew = modelId === "new";
 
   const [loading, setLoading] = useState(!isNew);
@@ -229,7 +222,7 @@ export default function StockDocumentPrintModelEditor() {
   const previewSrcDoc = useMemo(() => {
     const body = substituteMustache(html, sampleValues);
     const style = substituteMustache(css, sampleValues);
-    return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/><style>body{margin:0;padding:12px;background:#f3f4f6}.a4{width:210mm;min-height:297mm;margin:0 auto;background:#fff;box-shadow:0 0 0 1px #d1d5db;overflow:hidden}${style}</style></head><body><div class="a4">${body}</div></body></html>`;
+    return wrapPrintModelHtml(body, style);
   }, [html, css, sampleValues]);
 
   const onSave = async () => {
@@ -279,9 +272,13 @@ export default function StockDocumentPrintModelEditor() {
           <Space wrap>
             <Button onClick={() => navigate("/stock/documents/models")}>{T[17]}</Button>
             {canEdit && !isNew && modelId ? (
-              <Button onClick={() => navigate(`/stock/documents/models/new?clone=${encodeURIComponent(modelId)}`)}>
-                {getPageTexts("stockCommon")[0]}
-              </Button>
+              <Button
+                type="text"
+                icon={<CopyOutlined />}
+                aria-label={getPageTexts("stockCommon")[0]}
+                title={getPageTexts("stockCommon")[0]}
+                onClick={() => navigate(`/stock/documents/models/new?clone=${encodeURIComponent(modelId)}`)}
+              />
             ) : null}
             {canEdit ? (
               <Button type="primary" loading={saving} onClick={() => void onSave()}>

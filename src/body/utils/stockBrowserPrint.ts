@@ -28,24 +28,40 @@ export function sortByNumber<T>(rows: T[], key: keyof T, order: "asc" | "desc"):
   });
 }
 
+import {
+  A4_CONTENT_WIDTH_PX,
+  A4_HEIGHT_PX,
+  A4_WIDTH_PX,
+  a4FitScaleScript,
+  a4PrintBaseCss,
+  applyA4FitScaleToElement,
+  buildA4HtmlDocument,
+} from "./stockPrintA4";
+
 export function buildPrintTableHtml(title: string, headers: string[], bodyRows: string[][]): string {
   const h = headers.map((x) => `<th>${escapeHtml(x)}</th>`).join("");
   const rows = bodyRows
     .map((cells) => `<tr>${cells.map((c) => `<td>${escapeHtml(c)}</td>`).join("")}</tr>`)
     .join("");
-  return `<h2 style="font-size:15px;margin-top:18px;text-decoration:underline">${escapeHtml(title)}</h2><table><thead><tr>${h}</tr></thead><tbody>${rows}</tbody></table>`;
+  return `<h2 style="font-size:15px;margin-top:18px;text-decoration:underline">${escapeHtml(title)}</h2><table style="width:${A4_CONTENT_WIDTH_PX}px;border-collapse:collapse"><thead><tr>${h}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
-/** Ouvre une fenêtre d’impression avec le HTML fourni (tableaux, titres). */
+const SIMPLE_PRINT_CSS = `
+h1 { font-size: 18px; margin: 0 0 12px; }
+h2 { font-size: 15px; margin-top: 18px; text-decoration: underline; }
+table { border-collapse: collapse; margin-top: 8px; width: ${A4_CONTENT_WIDTH_PX}px; }
+th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
+th { background: #f0f0f0; }
+`.trim();
+
+/** Ouvre une fenêtre d’impression avec le HTML fourni (tableaux, titres) — feuille A4 px + mise à l’échelle. */
 export function printHtmlPage(documentTitle: string, innerHtml: string): boolean {
   const w = window.open("", "_blank", "noopener,noreferrer,width=900,height=700");
   if (!w) return false;
-  const css = `body{font-family:system-ui,-apple-system,sans-serif;padding:16px;font-size:13px} h1{font-size:18px;margin:0 0 12px} table{border-collapse:collapse;width:100%;margin-top:8px} th,td{border:1px solid #ccc;padding:6px 8px;text-align:left} th{background:#f0f0f0}`;
-  w.document.write(
-    `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>${escapeHtml(documentTitle)}</title><style>${css}</style></head><body><h1>${escapeHtml(documentTitle)}</h1>`,
-  );
-  w.document.write(innerHtml);
-  w.document.write("</body></html>");
+  const body = `<h1>${escapeHtml(documentTitle)}</h1>${innerHtml}`;
+  const doc = buildA4HtmlDocument(documentTitle, body, SIMPLE_PRINT_CSS);
+  w.document.open();
+  w.document.write(doc);
   w.document.close();
   w.focus();
   try {
@@ -133,27 +149,18 @@ export async function exportHtmlPagePdf(documentTitle: string, innerHtml: string
   host.style.position = "fixed";
   host.style.left = "0";
   host.style.top = "0";
-  host.style.width = "210mm";
-  host.style.minHeight = "297mm";
+  host.style.width = `${A4_WIDTH_PX}px`;
+  host.style.height = `${A4_HEIGHT_PX}px`;
   host.style.opacity = "0.01";
   host.style.pointerEvents = "none";
   host.style.zIndex = "-1";
   host.innerHTML = `
-    <style>
-      *{box-sizing:border-box}
-      body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:0;font-size:13px}
-      .a4{width:210mm;min-height:297mm;background:#fff;padding:0;margin:0}
-      h1{font-size:18px;margin:0 0 12px}
-      table{border-collapse:collapse;width:100%;margin-top:8px}
-      th,td{border:1px solid #ccc;padding:6px 8px;text-align:left}
-      th{background:#f0f0f0}
-    </style>
-    <div class="a4">
-      ${innerHtml}
-    </div>
+    <style>${a4PrintBaseCss(SIMPLE_PRINT_CSS)}</style>
+    <div class="print-a4-sheet"><div class="print-a4-content">${innerHtml}</div></div>
   `;
   document.body.appendChild(host);
   try {
+    applyA4FitScaleToElement(host);
     const blob = await htmlToPdfBlobNoMargin(host);
     return saveBlobAsPdf(blob, sanitizePdfFileName(documentTitle));
   } catch {
@@ -173,14 +180,15 @@ export async function exportFullHtmlDocumentPdf(documentTitle: string, fullDocum
   host.style.position = "fixed";
   host.style.left = "0";
   host.style.top = "0";
-  host.style.width = "210mm";
-  host.style.minHeight = "297mm";
+  host.style.width = `${A4_WIDTH_PX}px`;
+  host.style.height = `${A4_HEIGHT_PX}px`;
   host.style.opacity = "0.01";
   host.style.pointerEvents = "none";
   host.style.zIndex = "-1";
-  host.innerHTML = `<style>*{box-sizing:border-box} body{margin:0;padding:0} .a4{width:210mm;min-height:297mm;margin:0;padding:0;background:#fff} ${style}</style><div class="a4">${body}</div>`;
+  host.innerHTML = `<style>${a4PrintBaseCss(style)}</style><div class="print-a4-sheet"><div class="print-a4-content">${body}</div></div>`;
   document.body.appendChild(host);
   try {
+    applyA4FitScaleToElement(host);
     const blob = await htmlToPdfBlobNoMargin(host);
     return saveBlobAsPdf(blob, sanitizePdfFileName(documentTitle));
   } catch {

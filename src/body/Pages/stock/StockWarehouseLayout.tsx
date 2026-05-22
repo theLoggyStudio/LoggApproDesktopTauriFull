@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { Form, Input, Space, Typography, message } from "antd";
+import { Form, Input, Popconfirm, Space, Typography, message } from "antd";
 import { Outlet, useNavigate, useParams } from "react-router-dom";
-import { PlusOutlined, PrinterOutlined } from "@ant-design/icons";
+import { DeleteOutlined, EditOutlined, PlusOutlined, PrinterOutlined } from "@ant-design/icons";
 import { Button, Modal, Select } from "../../../items";
 import { usePageTexts } from "../../../hooks/usePageTexts";
 import { useSession } from "../../context/SessionContext";
 import { canPrintStockWarehouses } from "../../utils/stockPrivileges";
-import { fetchRefItems, upsertRefItem, type StockRefItem } from "../../../lib/stockApi";
+import { deleteRefItem, fetchRefItems, upsertRefItem, type StockRefItem } from "../../../lib/stockApi";
 import { StockPrintModal } from "./StockPrintModal";
 import { buildPrintTableHtml, sortByIsoDate } from "../../utils/stockBrowserPrint";
 import { printStockListWithOptionalTemplate } from "../../utils/stockListPrintWithTemplate";
@@ -24,8 +24,10 @@ export default function StockWarehouseLayout() {
   const [warehouses, setWarehouses] = useState<StockRefItem[]>([]);
   const [loadingWh, setLoadingWh] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
   const [createForm] = Form.useForm<{ name: string; code?: string }>();
+  const [editForm] = Form.useForm<{ name: string; code?: string }>();
 
   const loadWarehouses = useCallback(() => {
     setLoadingWh(true);
@@ -45,6 +47,47 @@ export default function StockWarehouseLayout() {
       navigate(`/stock/warehouse/${warehouses[0].id}`, { replace: true });
     }
   }, [loadingWh, warehouseId, warehouses, navigate]);
+
+  const openEditWarehouse = () => {
+    const w = warehouses.find((x) => x.id === warehouseId);
+    if (!w) return;
+    editForm.setFieldsValue({ name: w.name, code: w.code ?? "" });
+    setEditOpen(true);
+  };
+
+  const onEditWarehouse = async () => {
+    const v = await editForm.validateFields().catch(() => null);
+    if (!v?.name?.trim() || !warehouseId) {
+      message.warning(W[12]);
+      return;
+    }
+    try {
+      await upsertRefItem("warehouse", {
+        id: warehouseId,
+        name: v.name.trim(),
+        code: v.code?.trim() ?? "",
+      });
+      message.success(W[17] ?? W[11]);
+      setEditOpen(false);
+      await loadWarehouses();
+    } catch (e) {
+      message.error(String(e));
+    }
+  };
+
+  const onDeleteWarehouse = async () => {
+    if (!warehouseId) return;
+    try {
+      await deleteRefItem("warehouse", warehouseId);
+      message.success(W[18] ?? W[11]);
+      const list = await fetchRefItems("warehouse");
+      setWarehouses(list);
+      if (list.length) navigate(`/stock/warehouse/${list[0].id}`, { replace: true });
+      else navigate("/stock/warehouse", { replace: true });
+    } catch (e) {
+      message.error(String(e));
+    }
+  };
 
   const onCreateWarehouse = async () => {
     const v = await createForm.validateFields().catch(() => null);
@@ -135,6 +178,18 @@ export default function StockWarehouseLayout() {
             {W[4]}
           </Button>
         </Form.Item>
+        <Form.Item>
+          <Button type="default" icon={<EditOutlined />} onClick={openEditWarehouse}>
+            {W[15] ?? "Modifier"}
+          </Button>
+        </Form.Item>
+        <Form.Item>
+          <Popconfirm title={W[19] ?? W[14]} onConfirm={() => void onDeleteWarehouse()}>
+            <Button danger type="default" icon={<DeleteOutlined />}>
+              {W[16] ?? "Supprimer"}
+            </Button>
+          </Popconfirm>
+        </Form.Item>
       </Form>
       <StockPrintModal
         open={printOpen}
@@ -168,6 +223,25 @@ export default function StockWarehouseLayout() {
         width={440}
       >
         <Form form={createForm} layout="vertical">
+          <Form.Item name="name" label={W[7]} rules={[{ required: true, message: W[12] }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="code" label={W[8]}>
+            <Input />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        title={W[15] ?? W[6]}
+        open={editOpen}
+        onCancel={() => setEditOpen(false)}
+        onOk={() => void onEditWarehouse()}
+        okText={W[9]}
+        cancelText={W[10]}
+        destroyOnHidden
+        width={440}
+      >
+        <Form form={editForm} layout="vertical">
           <Form.Item name="name" label={W[7]} rules={[{ required: true, message: W[12] }]}>
             <Input />
           </Form.Item>

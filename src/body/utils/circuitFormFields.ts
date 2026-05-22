@@ -1,6 +1,7 @@
 import { STOCK_SYSTEM_MOVEMENT_FORM_TEMPLATE_ID, fetchStockFormTemplate } from "../../lib/stockApi";
+import { normalizeCircuitFieldType, type CircuitFieldType } from "./circuitFieldTypes";
 
-export type CircuitFieldType = "text" | "number" | "date" | "textarea" | "article";
+export type { CircuitFieldType } from "./circuitFieldTypes";
 
 export type CircuitStepFieldDraft = {
   key: string;
@@ -17,9 +18,7 @@ export function newCircuitFieldKey(): string {
 }
 
 function normalizeFieldType(t: string): CircuitFieldType {
-  const x = t.toLowerCase();
-  if (x === "number" || x === "date" || x === "textarea" || x === "article") return x;
-  return "text";
+  return normalizeCircuitFieldType(t);
 }
 
 export function parseCircuitFieldsJson(raw: string): CircuitStepFieldDraft[] {
@@ -94,8 +93,8 @@ export async function loadMovementTemplateFields(): Promise<CircuitStepFieldDraf
         { id: "sys-mvt-qty", label: "Quantité", type: "number", required: true, locked: true },
         { id: "sys-mvt-reason", label: "Motif", type: "textarea", required: false, locked: true },
         { id: "sys-mvt-ref", label: "Réf. document", type: "text", required: false, locked: true },
-        { id: "sys-mvt-supplier", label: "Fournisseur", type: "text", required: false, locked: true },
-        { id: "sys-mvt-client", label: "Client", type: "text", required: false, locked: true },
+        { id: "sys-mvt-supplier", label: "Fournisseur", type: "fournisseur", required: false, locked: true },
+        { id: "sys-mvt-client", label: "Client", type: "client", required: false, locked: true },
       ]),
     ).map((f) => ({ ...f, key: f.fieldId ?? f.key, locked: true }));
   }

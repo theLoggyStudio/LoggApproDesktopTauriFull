@@ -266,7 +266,8 @@ export function StockScheduledTasksModal({ open, onClose }: Props) {
       key: "done",
       width: 56,
       align: "center",
-      render: (_, record) => (
+      render: (_, record) =>
+        record.kind === "circuit_validate" || record.kind === "circuit_fill" ? null : (
         <span onClick={(e) => e.stopPropagation()}>
           <Checkbox
             aria-label={T[17]}
@@ -297,7 +298,6 @@ export function StockScheduledTasksModal({ open, onClose }: Props) {
       title: T[2],
       dataIndex: "title",
       key: "title",
-      ellipsis: true,
       render: (text: string, record) => (
         <span>
           {record.kind === "low_stock" ? (

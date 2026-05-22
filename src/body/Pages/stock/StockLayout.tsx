@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Layout, Menu, theme, Badge, Dropdown } from "antd";
 import { Button, NavBar } from "../../../items";
 import type { MenuProps } from "antd";
@@ -23,14 +23,26 @@ import { useSession } from "../../context/SessionContext";
 import { useScheduledTaskAlarms } from "../../hooks/useScheduledTaskAlarms";
 import {
   countLowStockTasks,
+  dispatchCollabTasksChanged,
   getReminderTasks,
   subscribeCollabTasks,
   subscribeScheduledTasks,
   syncLowStockTasksFromArticles,
 } from "../../utils/scheduledTasksStore";
-import { fetchArticles, fetchStockCollabTasks, type StockArticle } from "../../../lib/stockApi";
+import {
+  createCircuitStepCollabTask,
+  fetchArticles,
+  fetchRoleCircuitEntries,
+  fetchStockCollabTasks,
+  type StockArticle,
+  type StockRoleCircuitEntry,
+} from "../../../lib/stockApi";
 import { getPageTexts } from "../../../hooks/usePageTexts";
 import { hasStockPrivilege, hasStockScreenAccess } from "../../utils/stockPrivileges";
+import {
+  resolveStockSiderOpenKeys,
+  resolveStockSiderSelectedKeys,
+} from "../../utils/stockMenuNavigation";
 import { StockAccessGuard } from "./StockAccessGuard";
 import { StockDbSettingsModal } from "./StockDbSettingsModal";
 import { StockScheduledTasksModal } from "./StockScheduledTasksModal";
@@ -64,6 +76,7 @@ export default function StockLayout() {
   const [dbOpen, setDbOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [taskBadge, setTaskBadge] = useState(0);
+  const [roleCircuitEntries, setRoleCircuitEntries] = useState<StockRoleCircuitEntry[]>([]);
   const [openKeys, setOpenKeys] = useState<string[]>(() => {
     if (typeof window === "undefined") return [];
     const h = window.location.hash;
@@ -108,6 +121,19 @@ export default function StockLayout() {
   }, [session]);
 
   useEffect(() => {
+    if (!session?.id || !hasStockScreenAccess(session, "circuits")) {
+      setRoleCircuitEntries([]);
+      return;
+    }
+    fetchRoleCircuitEntries({
+      requesterUserId: session.id,
+      requesterRole: session.role ?? "",
+    })
+      .then(setRoleCircuitEntries)
+      .catch(() => setRoleCircuitEntries([]));
+  }, [session]);
+
+  useEffect(() => {
     if (!session) return;
     if (!hasStockScreenAccess(session, "articles")) return;
     let cancelled = false;
@@ -149,36 +175,10 @@ export default function StockLayout() {
   }, [session]);
 
   useEffect(() => {
-    const keys: string[] = [];
-    if (loc.pathname.includes("/articles")) keys.push("sub-articles");
-    if (loc.pathname.includes("/warehouse")) keys.push("sub-warehouse");
-    if (loc.pathname.includes("/user")) keys.push("sub-collab");
-    if (loc.pathname.includes("/circuits")) keys.push("sub-circuits");
-    if (loc.pathname.includes("/documents")) keys.push("sub-documents");
-    setOpenKeys(keys);
+    setOpenKeys(resolveStockSiderOpenKeys(loc.pathname));
   }, [loc.pathname]);
 
-  const selectedKeys = (() => {
-    if (loc.pathname.includes("/articles/units")) return ["articles-units"];
-    if (loc.pathname.includes("/articles/categories")) return ["articles-categories"];
-    if (loc.pathname.includes("/articles/devises")) return ["articles-devises"];
-    if (loc.pathname.includes("/articles")) return ["articles-list"];
-    if (/\/stock\/warehouse\/.+/.test(loc.pathname)) return ["warehouse-locations"];
-    if (loc.pathname.includes("/movements")) return ["movements"];
-    if (loc.pathname.includes("/fournisseurs")) return ["fournisseurs"];
-    if (loc.pathname.includes("/clients")) return ["clients"];
-    if (loc.pathname.includes("/documents/models")) return ["documents-models"];
-    if (loc.pathname.includes("/documents")) return ["documents-files"];
-    if (loc.pathname.includes("/user/roles")) return ["user-roles"];
-    if (loc.pathname.includes("/user")) return ["user-profil"];
-    if (
-      loc.pathname.includes("/circuits/new") ||
-      (loc.pathname.includes("/circuits/") && loc.pathname.includes("/edit"))
-    )
-      return ["circuits-form"];
-    if (loc.pathname.includes("/circuits")) return ["circuits-list"];
-    return ["dash"];
-  })();
+  const selectedKeys = resolveStockSiderSelectedKeys(loc.pathname);
 
   const menuItems: MenuProps["items"] = [];
 
@@ -191,34 +191,44 @@ export default function StockLayout() {
     });
   }
 
-  if (hasStockScreenAccess(session, "articles")) {
-    menuItems.push({
-      key: "sub-articles",
-      icon: <InboxOutlined />,
-      label: menuScreenLabel(M[1]),
-      children: [
-        {
-          key: "articles-list",
-          label: Nav[0],
-          onClick: () => navigate("/stock/articles"),
-        },
-        {
-          key: "articles-units",
-          label: Nav[1],
-          onClick: () => navigate("/stock/articles/units"),
-        },
-        {
-          key: "articles-categories",
-          label: Nav[2],
-          onClick: () => navigate("/stock/articles/categories"),
-        },
-        {
-          key: "articles-devises",
-          label: Nav[3],
-          onClick: () => navigate("/stock/articles/devises"),
-        },
-      ],
-    });
+  {
+    const articleChildren: NonNullable<MenuProps["items"]> = [];
+    if (hasStockScreenAccess(session, "articles")) {
+      articleChildren.push({
+        key: "articles-list",
+        label: Nav[0],
+        onClick: () => navigate("/stock/articles"),
+      });
+    }
+    if (hasStockScreenAccess(session, "articles_units")) {
+      articleChildren.push({
+        key: "articles-units",
+        label: Nav[1],
+        onClick: () => navigate("/stock/articles/units"),
+      });
+    }
+    if (hasStockScreenAccess(session, "articles_categories")) {
+      articleChildren.push({
+        key: "articles-categories",
+        label: Nav[2],
+        onClick: () => navigate("/stock/articles/categories"),
+      });
+    }
+    if (hasStockScreenAccess(session, "articles_devises")) {
+      articleChildren.push({
+        key: "articles-devises",
+        label: Nav[3],
+        onClick: () => navigate("/stock/articles/devises"),
+      });
+    }
+    if (articleChildren.length) {
+      menuItems.push({
+        key: "sub-articles",
+        icon: <InboxOutlined />,
+        label: menuScreenLabel(M[1]),
+        children: articleChildren,
+      });
+    }
   }
 
   if (hasStockScreenAccess(session, "warehouse")) {
@@ -263,59 +273,97 @@ export default function StockLayout() {
     });
   }
 
-  if (hasStockScreenAccess(session, "documents")) {
-    menuItems.push({
-      key: "sub-documents",
-      icon: <FileOutlined />,
-      label: menuScreenLabel(M[6]),
-      children: [
-        {
-          key: "documents-files",
-          label: DocNav[0],
-          onClick: () => navigate("/stock/documents"),
-        },
-        {
-          key: "documents-models",
-          label: DocNav[1],
-          onClick: () => navigate("/stock/documents/models"),
-        },
-      ],
-    });
-  }
-
-  if (hasStockScreenAccess(session, "circuits")) {
-    const children: NonNullable<MenuProps["items"]> = [
-      {
-        key: "circuits-list",
-        label: CirNav[0],
-        onClick: () => navigate("/stock/circuits"),
-      },
-    ];
-    if (hasStockPrivilege(session, "circuits_manage")) {
-      children.push({
-        key: "circuits-form",
-        label: CirNav[1],
-        onClick: () => navigate("/stock/circuits/new"),
+  {
+    const documentChildren: NonNullable<MenuProps["items"]> = [];
+    if (hasStockScreenAccess(session, "documents")) {
+      documentChildren.push({
+        key: "documents-files",
+        label: DocNav[0],
+        onClick: () => navigate("/stock/documents"),
       });
     }
-    children.push(
-      {
-        key: "circuits-forms",
-        label: CirNav[2],
-        onClick: () => navigate("/stock/circuits/forms"),
+    if (hasStockScreenAccess(session, "documents_models")) {
+      documentChildren.push({
+        key: "documents-models",
+        label: DocNav[1],
+        onClick: () => navigate("/stock/documents/models"),
+      });
+    }
+    if (documentChildren.length) {
+      menuItems.push({
+        key: "sub-documents",
+        icon: <FileOutlined />,
+        label: menuScreenLabel(M[6]),
+        children: documentChildren,
+      });
+    }
+  }
+
+  const dynamicCircuitChildren = useMemo<NonNullable<MenuProps["items"]>>(() => {
+    if (!hasStockScreenAccess(session, "circuits")) return [];
+    return roleCircuitEntries.map((e) => ({
+      key: `circuit-role-${e.circuitId}`,
+      label: e.circuitName,
+      onClick: async () => {
+        if (!session?.id) return;
+        if (session.role === "sadmin") {
+          navigate(`/stock/circuits/${e.circuitId}/edit`);
+          return;
+        }
+        if (e.canStart && e.active) {
+          try {
+            await createCircuitStepCollabTask({
+              requesterUserId: session.id,
+              circuitId: e.circuitId,
+              stepIndex: 0,
+              variant: "fill",
+            });
+            dispatchCollabTasksChanged();
+          } catch {
+            /* ignore: l’entrée sert aussi de raccourci vers les tâches */
+          }
+        }
+        setTasksOpen(true);
       },
-      {
-        key: "circuits-fill",
-        label: CirNav[3],
-        onClick: () => navigate("/stock/circuits/fill"),
-      },
-    );
-    menuItems.push({
-      key: "sub-circuits",
-      icon: <BranchesOutlined />,
-      label: menuScreenLabel(M[7]),
-      children,
-    });
+    }));
+  }, [roleCircuitEntries, session, navigate]);
+
+  {
+    const canCircuitsList = hasStockScreenAccess(session, "circuits");
+    const canCircuitsForms = hasStockScreenAccess(session, "circuits_forms");
+    if (canCircuitsList || canCircuitsForms) {
+      const children: NonNullable<MenuProps["items"]> = [];
+      if (canCircuitsList) {
+        children.push({
+          key: "circuits-list",
+          label: CirNav[0],
+          onClick: () => navigate("/stock/circuits"),
+        });
+      }
+      if (canCircuitsList && hasStockPrivilege(session, "circuits_manage")) {
+        children.push({
+          key: "circuits-form",
+          label: CirNav[1],
+          onClick: () => navigate("/stock/circuits/new"),
+        });
+      }
+      if (canCircuitsForms) {
+        children.push({
+          key: "circuits-forms",
+          label: CirNav[2],
+          onClick: () => navigate("/stock/circuits/forms"),
+        });
+      }
+      if (canCircuitsList && dynamicCircuitChildren.length) {
+        children.push(...dynamicCircuitChildren);
+      }
+      menuItems.push({
+        key: "sub-circuits",
+        icon: <BranchesOutlined />,
+        label: menuScreenLabel(M[7]),
+        children,
+      });
+    }
   }
 
   const collabChildren: NonNullable<MenuProps["items"]> = [];

@@ -13,6 +13,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
+  CopyOutlined,
   ArrowDownOutlined,
   ArrowUpOutlined,
   DeleteOutlined,
@@ -36,16 +37,15 @@ import {
 import { dispatchCollabTasksChanged } from "../../utils/scheduledTasksStore";
 import { hasStockPrivilege, hasStockScreenAccess } from "../../utils/stockPrivileges";
 import {
-  type CircuitFieldType,
   type CircuitStepFieldDraft,
-  mergeMovementTemplateIntoFields,
   newCircuitFieldKey,
   parseCircuitFieldsJson,
   serializeCircuitFieldsForApi,
   stripSystemMovementDuplicates,
-  loadMovementTemplateFields,
 } from "../../utils/circuitFormFields";
+import { buildCircuitFieldTypeSelectOptions, type CircuitFieldType } from "../../utils/circuitFieldTypes";
 import { buildPrintTableHtml, printHtmlPage } from "../../utils/stockBrowserPrint";
+import { ensureCircuitStepInteractionRoles } from "../../utils/stockCircuitRoles";
 
 const { Text } = Typography;
 
@@ -57,15 +57,34 @@ type StepDraft = {
   fields: CircuitStepFieldDraft[];
 };
 
-function normalizeFillRoleIdsFromApi(s: Pick<StockCircuitStepRow, "fillRoleIds" | "fillRoleId">): string[] {
+function stepDraftFromApiRow(
+  s: StockCircuitStepRow,
+  stepIndex: number,
+): Pick<StepDraft, "fillRoleIds" | "validateRoleId"> {
   const raw = (s.fillRoleIds ?? []).map((x) => String(x).trim()).filter(Boolean);
-  if (raw.length) return [...new Set(raw)];
-  const one = (s.fillRoleId ?? "").trim();
-  return one ? [one] : [];
+  const fromApi = raw.length
+    ? [...new Set(raw)]
+    : (s.fillRoleId ?? "").trim()
+      ? [(s.fillRoleId ?? "").trim()]
+      : [];
+  return ensureCircuitStepInteractionRoles(fromApi, s.validateRoleId ?? "", stepIndex);
 }
 
 function newKey() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function parseStepFieldsFromJson(raw: string): CircuitStepFieldDraft[] {
+  const parsed = stripSystemMovementDuplicates(
+    parseCircuitFieldsJson(raw).map((f) => ({
+      ...f,
+      key: (f.fieldId ?? f.key) || newKey(),
+      locked: false,
+    })),
+  );
+  return parsed.length
+    ? parsed
+    : [{ key: newCircuitFieldKey(), label: "", type: "text", required: false }];
 }
 
 export default function StockCircuitEditor() {
@@ -87,7 +106,6 @@ export default function StockCircuitEditor() {
   const [description, setDescription] = useState("");
   const [active, setActive] = useState(true);
   const [steps, setSteps] = useState<StepDraft[]>([]);
-  const [movementTpl, setMovementTpl] = useState<CircuitStepFieldDraft[]>([]);
   const [importOpen, setImportOpen] = useState(false);
   const [templatesPick, setTemplatesPick] = useState<StockFormTemplateRow[]>([]);
   const [importTplId, setImportTplId] = useState<string | undefined>();
@@ -115,8 +133,6 @@ export default function StockCircuitEditor() {
     if (!circuitId) return;
     setLoading(true);
     try {
-      const mt = await loadMovementTemplateFields().catch(() => [] as CircuitStepFieldDraft[]);
-      setMovementTpl(mt);
       const { circuit, steps: srvSteps } = await fetchStockCircuit(circuitId);
       setName(circuit.name);
       setDescription(circuit.description ?? "");
@@ -124,19 +140,16 @@ export default function StockCircuitEditor() {
       setSteps(
         [...srvSteps]
           .sort((a, b) => a.position - b.position)
-          .map((s) => ({
-            key: s.id || newKey(),
-            title: s.title,
-            fillRoleIds: normalizeFillRoleIdsFromApi(s),
-            validateRoleId: s.validateRoleId ?? "",
-            fields: mergeMovementTemplateIntoFields(
-              parseCircuitFieldsJson(s.fieldsJson).map((f) => ({
-                ...f,
-                key: (f.fieldId ?? f.key) || newKey(),
-              })),
-              mt,
-            ),
-          })),
+          .map((s, idx) => {
+            const roles = stepDraftFromApiRow(s, idx);
+            return {
+              key: s.id || newKey(),
+              title: s.title,
+              fillRoleIds: roles.fillRoleIds,
+              validateRoleId: roles.validateRoleId,
+              fields: parseStepFieldsFromJson(s.fieldsJson),
+            };
+          }),
       );
     } catch (e) {
       message.error(String(e));
@@ -157,10 +170,8 @@ export default function StockCircuitEditor() {
       (async () => {
         setLoading(true);
         try {
-          const mt = await loadMovementTemplateFields().catch(() => [] as CircuitStepFieldDraft[]);
           const { circuit, steps: srvSteps } = await fetchStockCircuit(clone);
           if (cancelled) return;
-          setMovementTpl(mt);
           const sfx = getPageTexts("stockCommon")[1] || " (copie)";
           setName(`${(circuit.name || "").trim()}${sfx}`);
           setDescription(circuit.description ?? "");
@@ -168,19 +179,16 @@ export default function StockCircuitEditor() {
           setSteps(
             [...srvSteps]
               .sort((a, b) => a.position - b.position)
-              .map((s) => ({
-                key: s.id || newKey(),
-                title: s.title,
-                fillRoleIds: normalizeFillRoleIdsFromApi(s),
-                validateRoleId: s.validateRoleId ?? "",
-                fields: mergeMovementTemplateIntoFields(
-                  parseCircuitFieldsJson(s.fieldsJson).map((f) => ({
-                    ...f,
-                    key: (f.fieldId ?? f.key) || newKey(),
-                  })),
-                  mt,
-                ),
-              })),
+              .map((s, idx) => {
+                const roles = stepDraftFromApiRow(s, idx);
+                return {
+                  key: s.id || newKey(),
+                  title: s.title,
+                  fillRoleIds: roles.fillRoleIds,
+                  validateRoleId: roles.validateRoleId,
+                  fields: parseStepFieldsFromJson(s.fieldsJson),
+                };
+              }),
           );
           skipEmptyNewAfterClone.current = true;
           setSearchParams({}, { replace: true });
@@ -215,28 +223,7 @@ export default function StockCircuitEditor() {
     ]);
   }, [circuitId, loadCircuit, navigate, searchParams, setSearchParams]);
 
-  useEffect(() => {
-    if (circuitId) return;
-    void loadMovementTemplateFields()
-      .then((m) => {
-        setMovementTpl(m);
-        setSteps((prev) =>
-          prev.map((s) => ({ ...s, fields: mergeMovementTemplateIntoFields(s.fields, m) })),
-        );
-      })
-      .catch(() => setMovementTpl([]));
-  }, [circuitId]);
-
-  const fieldTypeOptions = useMemo(
-    () => [
-      { value: "text" as const, label: C[16] },
-      { value: "number" as const, label: C[17] },
-      { value: "date" as const, label: C[18] },
-      { value: "textarea" as const, label: C[19] },
-      { value: "article" as const, label: C[37] },
-    ],
-    [C],
-  );
+  const fieldTypeOptions = useMemo(() => buildCircuitFieldTypeSelectOptions(), []);
 
   const moveStep = (index: number, dir: -1 | 1) => {
     const j = index + dir;
@@ -249,22 +236,16 @@ export default function StockCircuitEditor() {
   };
 
   const addStep = () => {
-    setSteps((prev) => {
-      const base = [{ key: newCircuitFieldKey(), label: "", type: "text" as const, required: false }];
-      const fields = movementTpl.length
-        ? mergeMovementTemplateIntoFields(base, movementTpl)
-        : base;
-      return [
-        ...prev,
-        {
-          key: newKey(),
-          title: "",
-          fillRoleIds: [],
-          validateRoleId: "",
-          fields,
-        },
-      ];
-    });
+    setSteps((prev) => [
+      ...prev,
+      {
+        key: newKey(),
+        title: "",
+        fillRoleIds: [],
+        validateRoleId: "",
+        fields: [{ key: newCircuitFieldKey(), label: "", type: "text", required: false }],
+      },
+    ]);
   };
 
   const removeStep = (index: number) => {
@@ -327,14 +308,6 @@ export default function StockCircuitEditor() {
         message.error(`${C[7]} ${i + 1} : ${C[8]}`);
         return;
       }
-      if (!st.fillRoleIds.length) {
-        message.error(`${C[7]} ${i + 1} : ${C[9]}`);
-        return;
-      }
-      if (i > 0 && !st.validateRoleId.trim()) {
-        message.error(`${C[7]} ${i + 1} : ${C[10]}`);
-        return;
-      }
     }
     setSaving(true);
     try {
@@ -343,13 +316,20 @@ export default function StockCircuitEditor() {
         name: n,
         description: description.trim(),
         active,
-        steps: steps.map((st, idx) => ({
-          title: st.title.trim(),
-          fillRoleIds: st.fillRoleIds.map((x) => x.trim()).filter(Boolean),
-          fillRoleId: st.fillRoleIds[0]?.trim() ?? "",
-          validateRoleId: idx === 0 ? "" : st.validateRoleId.trim(),
-          fieldsJson: serializeCircuitFieldsForApi(st.fields),
-        })),
+        steps: steps.map((st, idx) => {
+          const roles = ensureCircuitStepInteractionRoles(
+            st.fillRoleIds.map((x) => x.trim()).filter(Boolean),
+            idx === 0 ? "" : st.validateRoleId.trim(),
+            idx,
+          );
+          return {
+            title: st.title.trim(),
+            fillRoleIds: roles.fillRoleIds,
+            fillRoleId: roles.fillRoleIds[0] ?? "",
+            validateRoleId: roles.validateRoleId,
+            fieldsJson: serializeCircuitFieldsForApi(st.fields),
+          };
+        }),
       });
       message.success(C[29]);
       navigate("/stock/circuits");
@@ -448,9 +428,13 @@ export default function StockCircuitEditor() {
               {C[42]}
             </Button>
             {isEdit && circuitId ? (
-              <Button onClick={() => navigate(`/stock/circuits/new?clone=${encodeURIComponent(circuitId)}`)}>
-                {getPageTexts("stockCommon")[0]}
-              </Button>
+              <Button
+                type="text"
+                icon={<CopyOutlined />}
+                aria-label={getPageTexts("stockCommon")[0]}
+                title={getPageTexts("stockCommon")[0]}
+                onClick={() => navigate(`/stock/circuits/new?clone=${encodeURIComponent(circuitId)}`)}
+              />
             ) : null}
             <Button onClick={() => navigate("/stock/circuits")}>{C[25]}</Button>
             <Button type="primary" loading={saving} onClick={() => void onSave()}>
@@ -502,7 +486,7 @@ export default function StockCircuitEditor() {
                 <Form.Item label={C[8]} required>
                   <Input value={step.title} onChange={(e) => updateStep(si, { title: e.target.value })} />
                 </Form.Item>
-                <Form.Item label={C[9]} required>
+                <Form.Item label={C[9]} extra={<Text type="secondary">{C[53]}</Text>}>
                   <Select
                     mode="multiple"
                     allowClear
@@ -557,9 +541,6 @@ export default function StockCircuitEditor() {
               <Text strong style={{ display: "block", marginBottom: 8 }}>
                 {C[12]}
               </Text>
-              <Text type="secondary" style={{ display: "block", marginBottom: 8 }}>
-                {C[38]}
-              </Text>
               <Space wrap style={{ marginBottom: 8 }}>
                 <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => addField(si)}>
                   {C[20]}
@@ -589,7 +570,7 @@ export default function StockCircuitEditor() {
                     },
                     {
                       title: C[14],
-                      width: 140,
+                      width: 220,
                       render: (_: unknown, row: CircuitStepFieldDraft) => (
                         <Select
                           size="small"
@@ -603,7 +584,7 @@ export default function StockCircuitEditor() {
                     },
                     {
                       title: C[15],
-                      width: 90,
+                      width: 100,
                       align: "center",
                       render: (_: unknown, row: CircuitStepFieldDraft) => (
                         <Checkbox

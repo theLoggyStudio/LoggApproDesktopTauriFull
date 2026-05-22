@@ -4,15 +4,30 @@ import type { SessionUser } from "../context/SessionContext";
 export const STOCK_EDITABLE_PRIVILEGE_KEYS = [
   "dashboard",
   "articles",
+  "articles_units",
+  "articles_categories",
+  "articles_devises",
   "warehouse",
   "movements",
   "fournisseurs",
   "clients",
   "documents",
+  "documents_models",
   "circuits",
+  "circuits_forms",
   "roles",
+  "user",
   "settings",
 ] as const;
+
+/** Sous-écran : accès explicite ou via l’écran parent (rétrocompatibilité). */
+const STOCK_SCREEN_PARENT_KEY: Partial<Record<string, string>> = {
+  articles_units: "articles",
+  articles_categories: "articles",
+  articles_devises: "articles",
+  documents_models: "documents",
+  circuits_forms: "circuits",
+};
 
 export type StockEditablePrivilegeKey = (typeof STOCK_EDITABLE_PRIVILEGE_KEYS)[number];
 
@@ -57,6 +72,8 @@ export const STOCK_DOCUMENT_PRIVILEGE_KEYS = [
   "documents_import_pdf",
   "documents_export_pdf",
   "documents_delete_pdf",
+  /** Édition des modèles d’impression HTML/CSS (indépendante des imports de fichiers). */
+  "documents_print_models_manage",
 ] as const;
 
 export type StockDocumentPrivilegeKey = (typeof STOCK_DOCUMENT_PRIVILEGE_KEYS)[number];
@@ -90,7 +107,7 @@ export function canPreviewStockDocument(session: SessionUser | null, kind: strin
 /** Mot de passe initial par défaut (identique à `STOCK_APP_DEFAULT_PASSWORD` côté Rust). */
 export const STOCK_DEFAULT_INITIAL_PASSWORD = "LoggAppro2026!";
 
-/** Toutes les clés stock gérées par l’UI des privilèges (hors `user`, ajouté côté serveur). */
+/** Toutes les clés stock gérées par l’UI des privilèges (`user` est aussi injecté côté serveur si absent). */
 export const ALL_STOCK_USER_PRIVILEGE_KEYS: readonly string[] = [
   ...STOCK_EDITABLE_PRIVILEGE_KEYS,
   ...STOCK_IO_PRIVILEGE_KEYS,
@@ -114,7 +131,11 @@ export function hasStockScreenAccess(session: SessionUser | null, screen: string
   if (!session) return false;
   if (session.role === "sadmin") return true;
   if (session.role === "stock_user") {
-    return (session.stockPrivileges ?? []).includes(screen);
+    const p = session.stockPrivileges ?? [];
+    if (p.includes(screen)) return true;
+    const parent = STOCK_SCREEN_PARENT_KEY[screen];
+    if (parent && p.includes(parent)) return true;
+    return false;
   }
   return true;
 }
@@ -188,22 +209,35 @@ export function hasRefLocationDelete(session: SessionUser | null): boolean {
   return hasLegacyFullLocationAccess(session);
 }
 
+/** Vérifie l’accès écran à partir d’une liste brute de privilèges (sans session). */
+export function stockScreenAllowedInPrivileges(privileges: string[], screen: string): boolean {
+  if (privileges.includes(screen)) return true;
+  const parent = STOCK_SCREEN_PARENT_KEY[screen];
+  if (parent && privileges.includes(parent)) return true;
+  return false;
+}
+
 /** Premier écran autorisé après connexion (ordre menu). */
 export function getFirstStockPath(privileges: string[]): string {
   const order: { key: string; path: string }[] = [
     { key: "dashboard", path: "/stock" },
     { key: "articles", path: "/stock/articles" },
+    { key: "articles_units", path: "/stock/articles/units" },
+    { key: "articles_categories", path: "/stock/articles/categories" },
+    { key: "articles_devises", path: "/stock/articles/devises" },
     { key: "warehouse", path: "/stock/warehouse" },
     { key: "movements", path: "/stock/movements" },
     { key: "fournisseurs", path: "/stock/fournisseurs" },
     { key: "clients", path: "/stock/clients" },
     { key: "documents", path: "/stock/documents" },
+    { key: "documents_models", path: "/stock/documents/models" },
     { key: "circuits", path: "/stock/circuits" },
+    { key: "circuits_forms", path: "/stock/circuits/forms" },
     { key: "roles", path: "/stock/user/roles" },
     { key: "user", path: "/stock/user" },
   ];
   for (const { key, path } of order) {
-    if (privileges.includes(key)) return path;
+    if (stockScreenAllowedInPrivileges(privileges, key)) return path;
   }
   return "/stock/user";
 }
@@ -211,12 +245,17 @@ export function getFirstStockPath(privileges: string[]): string {
 export function pathnameToStockScreen(pathname: string): string {
   if (pathname.includes("/stock/user/roles")) return "roles";
   if (pathname.startsWith("/stock/user")) return "user";
+  if (pathname.includes("/stock/circuits/forms")) return "circuits_forms";
   if (pathname.startsWith("/stock/circuits")) return "circuits";
+  if (pathname.includes("/stock/articles/units")) return "articles_units";
+  if (pathname.includes("/stock/articles/categories")) return "articles_categories";
+  if (pathname.includes("/stock/articles/devises")) return "articles_devises";
   if (pathname.startsWith("/stock/articles")) return "articles";
   if (pathname.startsWith("/stock/warehouse")) return "warehouse";
   if (pathname.startsWith("/stock/movements")) return "movements";
   if (pathname.startsWith("/stock/fournisseurs")) return "fournisseurs";
   if (pathname.startsWith("/stock/clients")) return "clients";
+  if (pathname.includes("/stock/documents/models")) return "documents_models";
   if (pathname.startsWith("/stock/documents")) return "documents";
   if (pathname === "/stock" || pathname === "/stock/") return "dashboard";
   return "dashboard";
@@ -237,12 +276,15 @@ export function canPrintStockMovements(session: SessionUser | null): boolean {
 
 export function canPrintStockRefUnits(session: SessionUser | null): boolean {
   return (
-    hasStockPrivilege(session, "ref_units_import") || hasStockPrivilege(session, "ref_units_export")
+    hasStockScreenAccess(session, "articles_units") ||
+    hasStockPrivilege(session, "ref_units_import") ||
+    hasStockPrivilege(session, "ref_units_export")
   );
 }
 
 export function canPrintStockRefCategories(session: SessionUser | null): boolean {
   return (
+    hasStockScreenAccess(session, "articles_categories") ||
     hasStockPrivilege(session, "ref_categories_import") ||
     hasStockPrivilege(session, "ref_categories_export")
   );
@@ -250,6 +292,7 @@ export function canPrintStockRefCategories(session: SessionUser | null): boolean
 
 export function canPrintStockRefCurrencies(session: SessionUser | null): boolean {
   return (
+    hasStockScreenAccess(session, "articles_devises") ||
     hasStockPrivilege(session, "ref_currencies_import") ||
     hasStockPrivilege(session, "ref_currencies_export")
   );
@@ -279,4 +322,14 @@ export function canPrintStockClients(session: SessionUser | null): boolean {
 /** Liste documents (impression) : aligné sur `canViewStockDocuments`. */
 export function canPrintStockDocuments(session: SessionUser | null): boolean {
   return canViewStockDocuments(session);
+}
+
+/** Consultation de la liste des modèles d’impression HTML/CSS. */
+export function canViewDocumentPrintModels(session: SessionUser | null): boolean {
+  return hasStockScreenAccess(session, "documents_models") || canViewStockDocuments(session);
+}
+
+/** Édition des modèles d’impression (création, modification, suppression). */
+export function canEditDocumentPrintModels(session: SessionUser | null): boolean {
+  return hasStockPrivilege(session, "documents_print_models_manage");
 }

@@ -4,16 +4,17 @@ import { PrinterOutlined } from "@ant-design/icons";
 import { Button, Loading, Modal } from "../../../items";
 import { usePageTexts } from "../../../hooks/usePageTexts";
 import { useSession } from "../../context/SessionContext";
-import {
-  completeStockCollabTask,
-  fetchArticles,
-  fetchStockCircuit,
-  type StockArticle,
-} from "../../../lib/stockApi";
+import { completeStockCollabTask, fetchStockCircuit } from "../../../lib/stockApi";
 import { dispatchCollabTasksChanged, type ScheduledTask } from "../../utils/scheduledTasksStore";
 import { parseCircuitFieldsJson, formFieldName } from "../../utils/circuitFormFields";
+import {
+  loadCircuitFormEntityOptions,
+  resolveEntityFieldDisplayValue,
+  type CircuitFormEntityOptions,
+} from "../../utils/circuitFormEntityOptions";
+import { isCircuitEntityFieldType } from "../../utils/circuitFieldTypes";
 import { buildPrintTableHtml, printHtmlPage } from "../../utils/stockBrowserPrint";
-import { CircuitDynamicForm, type ArticleOption } from "./CircuitDynamicForm";
+import { CircuitDynamicForm } from "./CircuitDynamicForm";
 
 type Props = {
   open: boolean;
@@ -30,7 +31,7 @@ export function CircuitTaskFormModal({ open, task, onClose, onCompleted }: Props
   const [circuitName, setCircuitName] = useState("");
   const [fieldsJson, setFieldsJson] = useState("[]");
   const [values, setValues] = useState<Record<string, string>>({});
-  const [articles, setArticles] = useState<StockArticle[]>([]);
+  const [entityOptions, setEntityOptions] = useState<CircuitFormEntityOptions>({});
   const [approved, setApproved] = useState(false);
 
   const isValidate = task?.kind === "circuit_validate";
@@ -51,9 +52,9 @@ export function CircuitTaskFormModal({ open, task, onClose, onCompleted }: Props
     setLoading(true);
     void (async () => {
       try {
-        const [{ circuit, steps }, arts] = await Promise.all([
+        const [{ circuit, steps }, entities] = await Promise.all([
           fetchStockCircuit(task.circuitId!),
-          fetchArticles().catch(() => [] as StockArticle[]),
+          loadCircuitFormEntityOptions(),
         ]);
         setCircuitName(circuit.name ?? "");
         const idx = task.circuitStepIndex ?? 0;
@@ -68,7 +69,7 @@ export function CircuitTaskFormModal({ open, task, onClose, onCompleted }: Props
         setStepTitle(st.title ?? "");
         setFieldsJson(st.fieldsJson ?? "[]");
         setValues({});
-        setArticles(arts);
+        setEntityOptions(entities);
       } catch (e) {
         message.error(String(e));
         onClose();
@@ -78,18 +79,17 @@ export function CircuitTaskFormModal({ open, task, onClose, onCompleted }: Props
     })();
   }, [open, task, reset, onClose]);
 
-  const articleOptions: ArticleOption[] = useMemo(
-    () => articles.map((a) => ({ value: a.id, label: `${a.name} (${a.sku})` })),
-    [articles],
-  );
-
   const parsedFields = useMemo(() => parseCircuitFieldsJson(fieldsJson), [fieldsJson]);
 
   const handlePrint = () => {
     const headers = ["Champ", "Valeur"];
     const bodyRows = parsedFields.map((f) => {
       const n = formFieldName(f);
-      return [f.label.trim() || n, values[n] ?? ""];
+      const raw = values[n] ?? "";
+      const display = isCircuitEntityFieldType(f.type)
+        ? resolveEntityFieldDisplayValue(f.type, raw, entityOptions)
+        : raw;
+      return [f.label.trim() || n, display];
     });
     const title = `${circuitName} — ${stepTitle}`;
     const ok = printHtmlPage(title, buildPrintTableHtml(title, headers, bodyRows));
@@ -161,13 +161,29 @@ export function CircuitTaskFormModal({ open, task, onClose, onCompleted }: Props
           fields={parsedFields}
           value={values}
           onChange={setValues}
-          articles={articleOptions}
+          entityOptions={entityOptions}
           readOnly={isValidate}
         />
         {isValidate ? (
           <Checkbox style={{ marginTop: 16 }} checked={approved} onChange={(e) => setApproved(e.target.checked)}>
             {T[5]}
           </Checkbox>
+        ) : null}
+        {task?.history?.length ? (
+          <div style={{ marginTop: 16 }}>
+            <Typography.Text strong>Historique</Typography.Text>
+            <div style={{ marginTop: 8, maxHeight: 180, overflow: "auto" }}>
+              {task.history.map((h, i) => (
+                <Typography.Paragraph key={`${h.at}-${i}`} style={{ marginBottom: 6 }}>
+                  <Typography.Text type="secondary">
+                    {h.at ? new Date(h.at).toLocaleString("fr-FR") : "—"}
+                  </Typography.Text>
+                  {" — "}
+                  <Typography.Text>{h.note || h.action}</Typography.Text>
+                </Typography.Paragraph>
+              ))}
+            </div>
+          </div>
         ) : null}
       </Loading>
     </Modal>

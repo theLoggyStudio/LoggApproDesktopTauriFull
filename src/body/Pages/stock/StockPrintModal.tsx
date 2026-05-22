@@ -9,6 +9,7 @@ import {
   type StockDocumentPrintModelRow,
 } from "../../../lib/stockApi";
 import { substituteMustache } from "../../utils/stockPrintTemplateVariables";
+import { wrapPrintModelHtml } from "../../utils/stockPrintA4";
 
 export type StockPrintListOption = { value: string; label: string };
 
@@ -96,7 +97,7 @@ export function StockPrintModal({ open, onClose, lists, onPrint }: Props) {
     };
     const body = substituteMustache(preview.htmlContent ?? "", map);
     const style = substituteMustache(preview.cssContent ?? "", map);
-    return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"/><style>body{margin:0;padding:12px;background:#f3f4f6}.a4{width:210mm;min-height:297mm;margin:0 auto;background:#fff;box-shadow:0 0 0 1px #d1d5db;overflow:hidden}${style}</style></head><body><div class="a4">${body}</div></body></html>`;
+    return wrapPrintModelHtml(body, style);
   }, [preview]);
 
   return (
@@ -151,7 +152,7 @@ export function StockPrintModal({ open, onClose, lists, onPrint }: Props) {
               pagination={false}
               dataSource={modelsForScreen}
               locale={{ emptyText: Tm[15] ?? "Aucun modèle pour le moment." }}
-              columns={[{ title: Tm[4], dataIndex: "name", key: "name", ellipsis: true }]}
+              columns={[{ title: Tm[4], dataIndex: "name", key: "name" }]}
               onRow={(r) => ({
                 onClick: () => form.setFieldValue("modelId", r.id),
                 style: {

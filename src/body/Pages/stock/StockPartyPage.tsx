@@ -37,7 +37,7 @@ export function StockPartyPage({ kind, pageKey }: Props) {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingParty, setEditingParty] = useState<StockParty | null>(null);
-  const [form] = Form.useForm<{ name: string; address?: string }>();
+  const [form] = Form.useForm<{ name: string; address?: string; phone?: string; email?: string }>();
   const [printOpen, setPrintOpen] = useState(false);
 
   const load = useCallback(() => {
@@ -58,6 +58,8 @@ export function StockPartyPage({ kind, pageKey }: Props) {
         form.setFieldsValue({
           name: editingParty.name,
           address: editingParty.address ?? "",
+          phone: editingParty.phone ?? "",
+          email: editingParty.email ?? "",
         });
       } else {
         form.resetFields();
@@ -70,7 +72,14 @@ export function StockPartyPage({ kind, pageKey }: Props) {
     const v = await form.validateFields().catch(() => null);
     if (!v) return;
     try {
-      await upsertParty(kind, v.name.trim(), (v.address ?? "").trim(), editingParty?.id);
+      await upsertParty(
+        kind,
+        v.name.trim(),
+        (v.address ?? "").trim(),
+        editingParty?.id,
+        (v.phone ?? "").trim(),
+        (v.email ?? "").trim(),
+      );
       message.success(T[9]);
       setModalOpen(false);
       form.resetFields();
@@ -94,12 +103,14 @@ export function StockPartyPage({ kind, pageKey }: Props) {
   };
 
   const duplicatePartyFromModal = () => {
-    const v = form.getFieldsValue() as { name?: string; address?: string };
+    const v = form.getFieldsValue() as { name?: string; address?: string; phone?: string; email?: string };
     const sfx = getPageTexts("stockCommon")[1] || " (copie)";
     const nm = (v.name ?? "").trim();
     form.setFieldsValue({
       name: nm ? `${nm}${sfx}` : nm,
       address: (v.address ?? "").trim(),
+      phone: (v.phone ?? "").trim(),
+      email: (v.email ?? "").trim(),
     });
     setEditingParty(null);
   };
@@ -125,14 +136,26 @@ export function StockPartyPage({ kind, pageKey }: Props) {
       title: T[3],
       dataIndex: "name",
       key: "name",
-      ellipsis: true,
     },
     {
       title: T[11],
       dataIndex: "address",
       key: "address",
-      ellipsis: true,
       render: (a: string) => a || "—",
+    },
+    {
+      title: T[15] ?? "Téléphone",
+      dataIndex: "phone",
+      key: "phone",
+      width: 140,
+      render: (p?: string) => (p?.trim() ? p : "—"),
+    },
+    {
+      title: T[16] ?? "E-mail",
+      dataIndex: "email",
+      key: "email",
+      width: 180,
+      render: (e?: string) => (e?.trim() ? e : "—"),
     },
     {
       title: T[13],
@@ -148,10 +171,12 @@ export function StockPartyPage({ kind, pageKey }: Props) {
   const runPrint = async (listKey: string, sort: "asc" | "desc", modelId: string) => {
     if (listKey !== "parties") return false;
     const sorted = sortByIsoDate(rows, "createdAt", sort);
-    const headers = [T[3], T[11], Prt[7] ?? "Date"];
+    const headers = [T[3], T[11], T[15] ?? "Tél.", T[16] ?? "E-mail", Prt[7] ?? "Date"];
     const bodyRows = sorted.map((r) => [
       r.name,
       (r.address ?? "").trim() || "—",
+      (r.phone ?? "").trim() || "—",
+      (r.email ?? "").trim() || "—",
       r.createdAt ? dayjs(r.createdAt).format("DD/MM/YYYY HH:mm") : "—",
     ]);
     return await printStockListWithOptionalTemplate(
@@ -269,6 +294,12 @@ export function StockPartyPage({ kind, pageKey }: Props) {
           </Form.Item>
           <Form.Item name="address" label={T[11]} rules={[{ required: true, message: T[12] }]}>
             <Input.TextArea placeholder={T[11]} rows={3} autoSize={{ minRows: 2, maxRows: 6 }} />
+          </Form.Item>
+          <Form.Item name="phone" label={T[15] ?? "Téléphone"}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="email" label={T[16] ?? "E-mail"}>
+            <Input type="email" />
           </Form.Item>
         </Form>
       </Modal>

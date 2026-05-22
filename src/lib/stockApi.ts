@@ -67,6 +67,8 @@ export type StockParty = {
   name: string;
   /** Obligatoire à la saisie pour fournisseurs et clients. */
   address: string;
+  phone?: string;
+  email?: string;
   createdAt?: string;
 };
 
@@ -83,8 +85,18 @@ export async function removeArticle(id: string): Promise<{ success: boolean }> {
   return call("stock_delete_article", { id });
 }
 
-export async function fetchMovements(articleId?: string): Promise<StockMovement[]> {
-  const r = await call<{ movements: StockMovement[] }>("stock_list_movements", articleId ? { articleId } : {});
+export async function fetchMovements(opts?: {
+  articleId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  moveType?: string;
+}): Promise<StockMovement[]> {
+  const body: Record<string, unknown> = {};
+  if (opts?.articleId) body.articleId = opts.articleId;
+  if (opts?.dateFrom) body.dateFrom = opts.dateFrom;
+  if (opts?.dateTo) body.dateTo = opts.dateTo;
+  if (opts?.moveType) body.moveType = opts.moveType;
+  const r = await call<{ movements: StockMovement[] }>("stock_list_movements", body);
   const list = r.movements ?? [];
   return list.map((m) => ({
     ...m,
@@ -128,8 +140,17 @@ export async function upsertParty(
   name: string,
   address = "",
   id?: string,
+  phone?: string,
+  email?: string,
 ): Promise<{ success: boolean }> {
-  return call("stock_upsert_party", { kind, name, address, ...(id ? { id } : {}) });
+  return call("stock_upsert_party", {
+    kind,
+    name,
+    address,
+    ...(id ? { id } : {}),
+    ...(phone !== undefined ? { phone } : {}),
+    ...(email !== undefined ? { email } : {}),
+  });
 }
 
 export async function deleteParty(id: string): Promise<{ success: boolean }> {
@@ -230,6 +251,8 @@ export type StockAppUserRow = {
   id: string;
   login: string;
   displayName: string;
+  /** E-mail de contact (facultatif). */
+  email?: string;
   /** Adresse postale ou lieu (facultatif). */
   address?: string;
   privileges: string[];
@@ -246,6 +269,7 @@ export async function stockAppUserLogin(
   loginOrLabel: string;
   role: string;
   stockPrivileges: string[];
+  email?: string;
   address?: string;
   stockRoleId?: string;
 }> {
@@ -265,6 +289,7 @@ export async function upsertStockAppUser(body: {
   id?: string;
   login: string;
   displayName: string;
+  email?: string;
   address?: string;
   roleId?: string;
   password?: string;
@@ -276,6 +301,20 @@ export async function upsertStockAppUser(body: {
 
 export async function deleteStockAppUser(id: string, requesterRole: string): Promise<{ success: boolean }> {
   return call("stock_delete_app_user", { id, requesterRole });
+}
+
+/** Mise à jour du profil par l’utilisateur stock connecté (mot de passe actuel obligatoire). */
+export async function updateStockOwnProfile(body: {
+  requesterUserId: string;
+  requesterRole: string;
+  id: string;
+  currentPassword: string;
+  displayName: string;
+  email?: string;
+  address: string;
+  newPassword?: string;
+}): Promise<{ success: boolean; loginOrLabel?: string; email?: string; address?: string }> {
+  return call("stock_update_own_profile", body as Record<string, unknown>);
 }
 
 export type StockRefItem = {
@@ -497,9 +536,21 @@ export async function deleteStockCircuit(id: string): Promise<{ success: boolean
   return call("stock_delete_circuit", { id });
 }
 
+export async function setStockCircuitActive(id: string, active: boolean): Promise<{ success: boolean }> {
+  return call("stock_set_circuit_active", { id, active });
+}
+
 export type StockCollabTaskVisibility = "public" | "private" | "role";
 
 export type StockCollabTaskKind = "reminder" | "circuit_validate" | "circuit_fill";
+
+export type StockCollabTaskHistoryRow = {
+  action: string;
+  note: string;
+  actorUserId: string;
+  actorRoleId: string;
+  at: string;
+};
 
 export type StockCollabTaskRow = {
   id: string;
@@ -515,6 +566,7 @@ export type StockCollabTaskRow = {
   circuitStepIndex: number;
   createdAt: string;
   updatedAt: string;
+  history?: StockCollabTaskHistoryRow[];
 };
 
 export async function fetchStockCollabTasks(body: {
@@ -555,6 +607,25 @@ export async function createCircuitStepCollabTask(body: {
   return call("stock_create_circuit_step_collab_task", body as Record<string, unknown>);
 }
 
+export type StockRoleCircuitEntry = {
+  circuitId: string;
+  circuitName: string;
+  active: boolean;
+  firstStepIndex: number;
+  canStart: boolean;
+};
+
+export async function fetchRoleCircuitEntries(body: {
+  requesterUserId: string;
+  requesterRole: string;
+}): Promise<StockRoleCircuitEntry[]> {
+  const r = await call<{ entries: StockRoleCircuitEntry[] }>(
+    "stock_list_role_circuit_entries",
+    body as Record<string, unknown>,
+  );
+  return r.entries ?? [];
+}
+
 /** Modèle système « Mouvement de stock » (aligné sur `stock_commands::STOCK_SYSTEM_MOVEMENT_FORM_TEMPLATE_ID`). */
 export const STOCK_SYSTEM_MOVEMENT_FORM_TEMPLATE_ID = "f0000001-0001-4001-8001-000000000001";
 
@@ -564,6 +635,7 @@ export type StockFormTemplateRow = {
   description: string;
   fieldsJson: string;
   isSystem: boolean;
+  screenType?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -583,6 +655,7 @@ export async function upsertStockFormTemplate(body: {
   id?: string;
   name: string;
   description?: string;
+  screenType?: string;
   fieldsJson: unknown[];
 }): Promise<{ success: boolean; id: string }> {
   return call("stock_upsert_form_template", body as Record<string, unknown>);

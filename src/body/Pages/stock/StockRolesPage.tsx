@@ -108,9 +108,9 @@ export default function StockRolesPage() {
   };
 
   const columns: ColumnsType<StockRoleRow> = [
-    { title: R[3], dataIndex: "name", key: "name", ellipsis: true },
-    { title: R[4], dataIndex: "code", key: "code", width: 140, ellipsis: true },
-    { title: R[5], dataIndex: "description", key: "description", ellipsis: true },
+    { title: R[3], dataIndex: "name", key: "name" },
+    { title: R[4], dataIndex: "code", key: "code", width: 140 },
+    { title: R[5], dataIndex: "description", key: "description" },
   ];
 
   return (

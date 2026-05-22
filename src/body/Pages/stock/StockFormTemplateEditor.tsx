@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Card, Checkbox, Form, Input, Space, Table, Typography, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
+import { CopyOutlined, DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import { Button, Loading, Modal, Select } from "../../../items";
 import { getPageTexts, usePageTexts } from "../../../hooks/usePageTexts";
 import { useSession } from "../../context/SessionContext";
@@ -14,13 +14,19 @@ import {
 } from "../../../lib/stockApi";
 import { hasStockPrivilege } from "../../utils/stockPrivileges";
 import {
-  type CircuitFieldType,
   type CircuitStepFieldDraft,
   newCircuitFieldKey,
   parseCircuitFieldsJson,
   serializeCircuitFieldsForApi,
   stripSystemMovementDuplicates,
 } from "../../utils/circuitFormFields";
+import { buildCircuitFieldTypeSelectOptions, type CircuitFieldType } from "../../utils/circuitFieldTypes";
+import {
+  isStockFormTemplateScreenKey,
+  normalizeStockFormTemplateScreenType,
+  stockFormTemplateScreenOptions,
+  type StockFormTemplateScreenKey,
+} from "../../utils/stockFormTemplateScreens";
 
 const { Text } = Typography;
 
@@ -50,6 +56,7 @@ export default function StockFormTemplateEditor() {
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [screenType, setScreenType] = useState<StockFormTemplateScreenKey>("general");
   const [fields, setFields] = useState<CircuitStepFieldDraft[]>([
     { key: newCircuitFieldKey(), label: "", type: "text", required: false },
   ]);
@@ -61,16 +68,7 @@ export default function StockFormTemplateEditor() {
   /** Consultation pour les profils sans `circuits_manage` ; le modèle système reste toujours en lecture seule. */
   const readOnly = isSystem || !canManage;
 
-  const fieldTypeOptions = useMemo(
-    () => [
-      { value: "text" as const, label: C[16] },
-      { value: "number" as const, label: C[17] },
-      { value: "date" as const, label: C[18] },
-      { value: "textarea" as const, label: C[19] },
-      { value: "article" as const, label: C[37] },
-    ],
-    [C],
-  );
+  const fieldTypeOptions = useMemo(() => buildCircuitFieldTypeSelectOptions(), []);
 
   const load = useCallback(async () => {
     if (!templateId || isNew) {
@@ -84,6 +82,7 @@ export default function StockFormTemplateEditor() {
       }
       setName("");
       setDescription("");
+      setScreenType("general");
       setFields([{ key: newCircuitFieldKey(), label: "", type: "text", required: false }]);
       setIsSystem(false);
       setLoading(false);
@@ -94,6 +93,7 @@ export default function StockFormTemplateEditor() {
       const t = await fetchStockFormTemplate(templateId);
       setName(t.name);
       setDescription(t.description ?? "");
+      setScreenType(normalizeStockFormTemplateScreenType(t.screenType));
       setIsSystem(Boolean(t.isSystem));
       const parsed = parseCircuitFieldsJson(t.fieldsJson);
       setFields(parsed.length ? parsed : [{ key: newCircuitFieldKey(), label: "", type: "text", required: false }]);
@@ -122,6 +122,7 @@ export default function StockFormTemplateEditor() {
         const sfx = getPageTexts("stockCommon")[1] || " (copie)";
         setName(`${(t.name || "").trim()}${sfx}`);
         setDescription(t.description ?? "");
+        setScreenType(normalizeStockFormTemplateScreenType(t.screenType));
         setIsSystem(false);
         const parsed = parseCircuitFieldsJson(t.fieldsJson);
         const base =
@@ -147,6 +148,12 @@ export default function StockFormTemplateEditor() {
   useEffect(() => {
     if (isNew && !canManage) navigate("/stock/circuits/forms", { replace: true });
   }, [isNew, canManage, navigate]);
+
+  useEffect(() => {
+    if (!isNew) return;
+    const s = (searchParams.get("screenType") ?? "").trim();
+    if (isStockFormTemplateScreenKey(s)) setScreenType(s);
+  }, [isNew, searchParams]);
 
   const addField = () => {
     if (readOnly) return;
@@ -205,6 +212,7 @@ export default function StockFormTemplateEditor() {
         id: isNew ? undefined : templateId,
         name: n,
         description: description.trim(),
+        screenType,
         fieldsJson: serializeCircuitFieldsForApi(fields),
       });
       message.success(T[16]);
@@ -224,9 +232,13 @@ export default function StockFormTemplateEditor() {
           <Space>
             <Button onClick={() => navigate("/stock/circuits/forms")}>{C[25]}</Button>
             {!readOnly && !isNew && templateId ? (
-              <Button onClick={() => navigate(`/stock/circuits/forms/new?clone=${encodeURIComponent(templateId)}`)}>
-                {getPageTexts("stockCommon")[0]}
-              </Button>
+              <Button
+                type="text"
+                icon={<CopyOutlined />}
+                aria-label={getPageTexts("stockCommon")[0]}
+                title={getPageTexts("stockCommon")[0]}
+                onClick={() => navigate(`/stock/circuits/forms/new?clone=${encodeURIComponent(templateId)}`)}
+              />
             ) : null}
             {!readOnly ? (
               <Button type="primary" loading={saving} onClick={() => void onSave()}>
@@ -245,6 +257,15 @@ export default function StockFormTemplateEditor() {
           </Form.Item>
           <Form.Item label={T[5]}>
             <Input.TextArea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} disabled={readOnly} />
+          </Form.Item>
+          <Form.Item label={T[18] ?? "Écran"} required>
+            <Select
+              style={{ width: "100%", maxWidth: 400 }}
+              value={screenType}
+              disabled={readOnly || isSystem}
+              options={stockFormTemplateScreenOptions()}
+              onChange={(v) => setScreenType(normalizeStockFormTemplateScreenType(v ?? "general"))}
+            />
           </Form.Item>
         </Form>
 
@@ -282,7 +303,7 @@ export default function StockFormTemplateEditor() {
               },
               {
                 title: C[14],
-                width: 150,
+                width: 220,
                 render: (_: unknown, row: CircuitStepFieldDraft) => (
                   <Select
                     size="small"
@@ -296,7 +317,7 @@ export default function StockFormTemplateEditor() {
               },
               {
                 title: C[15],
-                width: 80,
+                width: 100,
                 align: "center",
                 render: (_: unknown, row: CircuitStepFieldDraft) => (
                   <Checkbox

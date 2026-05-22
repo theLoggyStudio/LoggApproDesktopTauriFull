@@ -118,6 +118,7 @@ export default function PageConnection() {
             loginOrLabel: stockUser.loginOrLabel ?? email,
             role: stockUser.role ?? "stock_user",
             stockPrivileges: stockUser.stockPrivileges ?? [],
+            email: stockUser.email?.trim() || undefined,
             address: stockUser.address?.trim() || undefined,
             stockRoleId: stockUser.stockRoleId?.trim() || undefined,
           });

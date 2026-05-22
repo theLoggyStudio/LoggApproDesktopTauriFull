@@ -261,8 +261,8 @@ export function StockRefItemsPage({ kind, pageKey, warehouseId, formVariant = "m
 
   const columns: ColumnsType<StockRefItem> = useMemo(() => {
     const base: ColumnsType<StockRefItem> = [
-      { title: T[3], dataIndex: "name", key: "name", ellipsis: true },
-      { title: T[4], dataIndex: "code", key: "code", width: 140, ellipsis: true },
+      { title: T[3], dataIndex: "name", key: "name" },
+      { title: T[4], dataIndex: "code", key: "code", width: 140 },
     ];
     if (isLoc && !warehouseId) {
       base.push({
@@ -270,7 +270,6 @@ export function StockRefItemsPage({ kind, pageKey, warehouseId, formVariant = "m
         dataIndex: "warehouseName",
         key: "warehouseName",
         width: 160,
-        ellipsis: true,
       });
     }
     if (isLoc) {

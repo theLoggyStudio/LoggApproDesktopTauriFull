@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, Descriptions, Popconfirm, Space, Switch, Table, Typography, message } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { CopyOutlined, PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { Button, Loading, Modal } from "../../../items";
 import { getPageTexts, usePageTexts } from "../../../hooks/usePageTexts";
 import { useSession } from "../../context/SessionContext";
-import { deleteStockCircuit, fetchStockCircuits, type StockCircuitRow } from "../../../lib/stockApi";
+import {
+  deleteStockCircuit,
+  fetchStockCircuits,
+  setStockCircuitActive,
+  type StockCircuitRow,
+} from "../../../lib/stockApi";
 import { hasStockPrivilege } from "../../utils/stockPrivileges";
 
 const { Paragraph, Text } = Typography;
@@ -34,14 +39,30 @@ export default function StockCircuitList() {
   }, [load]);
 
   const columns: ColumnsType<StockCircuitRow> = [
-    { title: C[3], dataIndex: "name", key: "name", ellipsis: true },
-    { title: C[4], dataIndex: "description", key: "description", ellipsis: true, width: 280 },
+    { title: C[3], dataIndex: "name", key: "name" },
+    { title: C[4], dataIndex: "description", key: "description", width: 280 },
     {
       title: C[5],
       dataIndex: "active",
       key: "active",
       width: 90,
-      render: (a: boolean) => <Switch checked={a} disabled size="small" />,
+      render: (a: boolean, r) => (
+        <Switch
+          checked={a}
+          size="small"
+          disabled={!canManage}
+          onClick={(_, e) => e.stopPropagation()}
+          onChange={async (checked) => {
+            if (!canManage) return;
+            try {
+              await setStockCircuitActive(r.id, checked);
+              setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, active: checked } : x)));
+            } catch (err) {
+              message.error(String(err));
+            }
+          }}
+        />
+      ),
     },
   ];
 
@@ -95,18 +116,19 @@ export default function StockCircuitList() {
         footer={
           detailRow && canManage ? (
             <Space style={{ width: "100%", justifyContent: "flex-end" }}>
-              <Button onClick={() => setDetailRow(null)}>{C[25]}</Button>
               <Popconfirm title={C[33]} onConfirm={() => void onDelete(detailRow.id)} okText={roleTx[8]} cancelText={C[25]}>
                 <Button danger>{C[27]}</Button>
               </Popconfirm>
               <Button
+                type="text"
+                icon={<CopyOutlined />}
+                aria-label={getPageTexts("stockCommon")[0]}
+                title={getPageTexts("stockCommon")[0]}
                 onClick={() => {
                   navigate(`/stock/circuits/new?clone=${encodeURIComponent(detailRow.id)}`);
                   setDetailRow(null);
                 }}
-              >
-                {getPageTexts("stockCommon")[0]}
-              </Button>
+              />
               <Button
                 type="primary"
                 onClick={() => {
@@ -117,9 +139,7 @@ export default function StockCircuitList() {
                 {C[26]}
               </Button>
             </Space>
-          ) : (
-            <Button onClick={() => setDetailRow(null)}>{C[25]}</Button>
-          )
+          ) : null
         }
         destroyOnHidden
         width={520}
@@ -129,7 +149,23 @@ export default function StockCircuitList() {
             <Descriptions column={1} size="small" bordered>
               <Descriptions.Item label={C[4]}>{detailRow.description?.trim() ? detailRow.description : "—"}</Descriptions.Item>
               <Descriptions.Item label={C[5]}>
-                <Switch checked={detailRow.active} disabled size="small" />
+                <Switch
+                  checked={detailRow.active}
+                  size="small"
+                  disabled={!canManage}
+                  onChange={async (checked) => {
+                    if (!canManage) return;
+                    try {
+                      await setStockCircuitActive(detailRow.id, checked);
+                      setDetailRow({ ...detailRow, active: checked });
+                      setRows((prev) =>
+                        prev.map((x) => (x.id === detailRow.id ? { ...x, active: checked } : x)),
+                      );
+                    } catch (err) {
+                      message.error(String(err));
+                    }
+                  }}
+                />
               </Descriptions.Item>
             </Descriptions>
           </>

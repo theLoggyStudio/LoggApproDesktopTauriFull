@@ -8,6 +8,7 @@ import { getPageTexts, usePageTexts } from "../../../hooks/usePageTexts";
 import { useSession } from "../../context/SessionContext";
 import { deleteStockFormTemplate, fetchStockFormTemplates, type StockFormTemplateRow } from "../../../lib/stockApi";
 import { hasStockPrivilege } from "../../utils/stockPrivileges";
+import { stockFormTemplateScreenLabel } from "../../utils/stockFormTemplateScreens";
 
 const { Text } = Typography;
 
@@ -40,6 +41,13 @@ export default function StockFormTemplatesList() {
 
   const columns: ColumnsType<StockFormTemplateRow> = [
     {
+      title: T[18] ?? "Écran",
+      dataIndex: "screenType",
+      key: "screenType",
+      width: 180,
+      render: (v?: string) => stockFormTemplateScreenLabel(v),
+    },
+    {
       title: T[4],
       dataIndex: "name",
       key: "name",
@@ -56,7 +64,6 @@ export default function StockFormTemplatesList() {
       title: T[5],
       dataIndex: "description",
       key: "description",
-      ellipsis: true,
     },
   ];
 
@@ -150,6 +157,9 @@ export default function StockFormTemplatesList() {
       >
         {detailRow ? (
           <Descriptions column={1} size="small" bordered>
+            <Descriptions.Item label={T[18] ?? "Écran"}>
+              {stockFormTemplateScreenLabel(detailRow.screenType)}
+            </Descriptions.Item>
             <Descriptions.Item label={T[5]}>{detailRow.description?.trim() ? detailRow.description : "—"}</Descriptions.Item>
           </Descriptions>
         ) : null}

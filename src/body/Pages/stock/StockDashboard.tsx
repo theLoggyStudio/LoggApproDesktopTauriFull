@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Card, Col, Row, Space, Statistic, Tag, Typography } from "antd";
 import { Button, Loading, Table } from "../../../items";
+import { useNavigate } from "react-router-dom";
 import { WarningOutlined, ReloadOutlined, PrinterOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
 import {
@@ -26,6 +27,7 @@ import { printStockListWithOptionalTemplate } from "../../utils/stockListPrintWi
 const { Title, Text } = Typography;
 
 export default function StockDashboard() {
+  const navigate = useNavigate();
   const T = usePageTexts("stockDashboard");
   const Prt = usePageTexts("stockPrint");
   const { session } = useSession();
@@ -187,11 +189,24 @@ export default function StockDashboard() {
         </Row>
       ) : null}
 
-      <Card style={{ marginTop: 24 }} title={T[4]} extra={<Button icon={<ReloadOutlined />} onClick={load}>{T[14]}</Button>}>
+      <Card
+        style={{ marginTop: 24 }}
+        title={T[4]}
+        extra={
+          <Space>
+            <Button type="link" style={{ paddingInline: 4 }} onClick={() => navigate("/stock/movements")}>
+              {T[20] ?? "Voir tous les mouvements"}
+            </Button>
+            <Button icon={<ReloadOutlined />} onClick={load}>
+              {T[14]}
+            </Button>
+          </Space>
+        }
+      >
         <Table
           size="small"
           rowKey="id"
-          pagination={false}
+          pagination={{ pageSize: 10, showSizeChanger: false }}
           locale={{ emptyText: T[13] }}
           dataSource={data?.recentMovements ?? []}
           columns={[
@@ -207,7 +222,6 @@ export default function StockDashboard() {
             {
               title: T[15],
               key: "tiers",
-              ellipsis: true,
               render: (_, row) => {
                 const u = row.moveType?.toUpperCase();
                 if (u === "IN") return row.supplierName ?? "";

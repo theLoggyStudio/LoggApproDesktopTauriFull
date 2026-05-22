@@ -65,6 +65,7 @@ async fn invoke_handler(Json(req): Json<InvokeRequest>) -> impl IntoResponse {
         "stock_list_app_users" => crate::stock_commands::stock_list_app_users(payload_str).await,
         "stock_upsert_app_user" => crate::stock_commands::stock_upsert_app_user(payload_str).await,
         "stock_delete_app_user" => crate::stock_commands::stock_delete_app_user(payload_str).await,
+        "stock_update_own_profile" => crate::stock_commands::stock_update_own_profile(payload_str).await,
         "stock_list_ref_items" => crate::stock_commands::stock_list_ref_items(payload_str).await,
         "stock_upsert_ref_item" => crate::stock_commands::stock_upsert_ref_item(payload_str).await,
         "stock_delete_ref_item" => crate::stock_commands::stock_delete_ref_item(payload_str).await,
@@ -86,6 +87,10 @@ async fn invoke_handler(Json(req): Json<InvokeRequest>) -> impl IntoResponse {
         "stock_upsert_role" => crate::stock_commands::stock_upsert_role(payload_str).await,
         "stock_delete_role" => crate::stock_commands::stock_delete_role(payload_str).await,
         "stock_list_circuits" => crate::stock_commands::stock_list_circuits(payload_str).await,
+        "stock_list_role_circuit_entries" => {
+            crate::stock_commands::stock_list_role_circuit_entries(payload_str).await
+        },
+        "stock_set_circuit_active" => crate::stock_commands::stock_set_circuit_active(payload_str).await,
         "stock_get_circuit" => crate::stock_commands::stock_get_circuit(payload_str).await,
         "stock_upsert_circuit" => crate::stock_commands::stock_upsert_circuit(payload_str).await,
         "stock_delete_circuit" => crate::stock_commands::stock_delete_circuit(payload_str).await,

@@ -219,7 +219,7 @@ export default function StockDocumentsList() {
   };
 
   const columns: ColumnsType<StockDocumentRow> = [
-    { title: T[5], dataIndex: "originalName", key: "originalName", ellipsis: true },
+    { title: T[5], dataIndex: "originalName", key: "originalName" },
     {
       title: T[6],
       dataIndex: "kind",
@@ -240,7 +240,6 @@ export default function StockDocumentsList() {
       dataIndex: "movementCaption",
       key: "movementCaption",
       width: 220,
-      ellipsis: true,
       render: (cap: string | undefined) =>
         cap ? (
           <Input size="small" readOnly disabled value={cap} style={{ cursor: "default" }} />

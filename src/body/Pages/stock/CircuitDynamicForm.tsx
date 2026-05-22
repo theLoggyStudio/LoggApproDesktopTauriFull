@@ -4,22 +4,49 @@ import "dayjs/locale/fr";
 import { Select } from "../../../items";
 import type { CircuitStepFieldDraft } from "../../utils/circuitFormFields";
 import { formFieldName } from "../../utils/circuitFormFields";
+import { isCircuitEntityFieldType } from "../../utils/circuitFieldTypes";
+import type { CircuitFormEntityOptions, EntitySelectOption } from "../../utils/circuitFormEntityOptions";
 
 dayjs.locale("fr");
 
-export type ArticleOption = { value: string; label: string };
+export type ArticleOption = EntitySelectOption;
 
 type Props = {
   fields: CircuitStepFieldDraft[];
   value: Record<string, string>;
   onChange: (next: Record<string, string>) => void;
-  articles: ArticleOption[];
+  /** @deprecated Préférer `entityOptions` ; conservé pour compatibilité. */
+  articles?: EntitySelectOption[];
+  entityOptions?: CircuitFormEntityOptions;
   readOnly?: boolean;
 };
 
-export function CircuitDynamicForm({ fields, value, onChange, articles, readOnly }: Props) {
+export function CircuitDynamicForm({ fields, value, onChange, articles, entityOptions, readOnly }: Props) {
+  const entities: CircuitFormEntityOptions = {
+    ...entityOptions,
+    article: entityOptions?.article ?? articles,
+  };
+
   const set = (name: string, v: string) => {
     onChange({ ...value, [name]: v });
+  };
+
+  const renderEntitySelect = (f: CircuitStepFieldDraft, name: string, cur: string, label: string) => {
+    const opts = isCircuitEntityFieldType(f.type) ? entities[f.type] ?? [] : [];
+    return (
+      <Form.Item key={f.key} label={label}>
+        <Select
+          showSearch
+          optionFilterProp="label"
+          allowClear
+          placeholder="—"
+          value={cur || undefined}
+          options={opts}
+          onChange={(v) => set(name, v ?? "")}
+          style={{ width: "100%", maxWidth: 480 }}
+        />
+      </Form.Item>
+    );
   };
 
   return (
@@ -29,21 +56,8 @@ export function CircuitDynamicForm({ fields, value, onChange, articles, readOnly
           const name = formFieldName(f);
           const cur = value[name] ?? "";
           const label = (f.label.trim() || name) + (f.required ? " *" : "");
-          if (f.type === "article") {
-            return (
-              <Form.Item key={f.key} label={label}>
-                <Select
-                  showSearch
-                  optionFilterProp="label"
-                  allowClear
-                  placeholder="—"
-                  value={cur || undefined}
-                  options={articles}
-                  onChange={(v) => set(name, v ?? "")}
-                  style={{ width: "100%", maxWidth: 480 }}
-                />
-              </Form.Item>
-            );
+          if (isCircuitEntityFieldType(f.type)) {
+            return renderEntitySelect(f, name, cur, label);
           }
           if (f.type === "number") {
             return (

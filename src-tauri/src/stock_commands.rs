@@ -23,14 +23,21 @@ use crate::payload::encrypt_response;
 /// Mot de passe initial si aucun mot de passe n'est fourni à la création (à communiquer à l'utilisateur).
 const STOCK_APP_DEFAULT_PASSWORD: &str = "LoggAppro2026!";
 
+/// Rôle « Direction » (DIR), créé à l’installation (`ensure_stock_default_circuits_if_empty`).
+const STOCK_ROLE_DIRECTION_ID: &str = "a0000001-0001-4001-8001-000000000004";
+
 /// Clés d'écran autorisées pour les privilèges (le droit « Collaborateur » est toujours ajouté côté serveur).
 const STOCK_PRIVILEGE_KEYS: &[&str] = &[
     "dashboard",
     "articles",
+    "articles_units",
+    "articles_categories",
+    "articles_devises",
     "warehouse",
     "movements",
     "fournisseurs",
     "clients",
+    "user",
     "settings",
     "dashboard_charts",
     "articles_import",
@@ -54,10 +61,12 @@ const STOCK_PRIVILEGE_KEYS: &[&str] = &[
     "ref_currencies_import",
     "ref_currencies_export",
     "circuits",
+    "circuits_forms",
     "circuits_manage",
     "roles",
     "roles_manage",
     "documents",
+    "documents_models",
     "documents_view",
     "documents_import_png",
     "documents_export_png",
@@ -68,6 +77,7 @@ const STOCK_PRIVILEGE_KEYS: &[&str] = &[
     "documents_import_pdf",
     "documents_export_pdf",
     "documents_delete_pdf",
+    "documents_print_models_manage",
 ];
 
 fn hash_stock_password(plain: &str) -> Result<String, String> {
@@ -212,6 +222,18 @@ async fn ensure_stock_party_and_migration(conn: &mut AnyConnection) -> Result<()
         .await
         .map_err(|e| e.to_string())?;
     }
+    if !party_cols.contains("phone") {
+        sqlx::query::<Any>("ALTER TABLE stock_party ADD COLUMN phone TEXT NOT NULL DEFAULT ''")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    if !party_cols.contains("email") {
+        sqlx::query::<Any>("ALTER TABLE stock_party ADD COLUMN email TEXT NOT NULL DEFAULT ''")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
 
     let rows = sqlx::query::<Any>("PRAGMA table_info(stock_movement)")
         .fetch_all(&mut *conn)
@@ -278,6 +300,7 @@ async fn ensure_stock_app_user_schema(conn: &mut AnyConnection) -> Result<(), St
             id TEXT PRIMARY KEY,
             login TEXT NOT NULL COLLATE NOCASE,
             display_name TEXT NOT NULL DEFAULT '',
+            email TEXT NOT NULL DEFAULT '',
             address TEXT NOT NULL DEFAULT '',
             password_hash TEXT NOT NULL,
             privileges_json TEXT NOT NULL DEFAULT '[]',
@@ -307,6 +330,12 @@ async fn ensure_stock_app_user_schema(conn: &mut AnyConnection) -> Result<(), St
     }
     if !user_cols.contains("role_id") {
         sqlx::query::<Any>("ALTER TABLE stock_app_user ADD COLUMN role_id TEXT NOT NULL DEFAULT ''")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    if !user_cols.contains("email") {
+        sqlx::query::<Any>("ALTER TABLE stock_app_user ADD COLUMN email TEXT NOT NULL DEFAULT ''")
             .execute(&mut *conn)
             .await
             .map_err(|e| e.to_string())?;
@@ -484,6 +513,7 @@ async fn ensure_stock_role_and_circuit_schema(conn: &mut AnyConnection) -> Resul
     .await
     .map_err(|e| format!("stock_circuit_step: {}", e))?;
     ensure_stock_circuit_step_fill_role_ids_json(conn).await?;
+    ensure_circuit_steps_default_direction_role(conn).await?;
     ensure_stock_role_privileges_json_column(conn).await?;
     ensure_stock_default_circuits_if_empty(conn).await?;
     merge_stock_user_privileges_into_roles_once(conn).await?;
@@ -698,6 +728,59 @@ async fn ensure_stock_default_circuits_if_empty(conn: &mut AnyConnection) -> Res
     Ok(())
 }
 
+/// Si une étape n’a aucun rôle de remplissage (ou pas de validateur après la 1ʳᵉ), applique Direction.
+fn ensure_circuit_step_interaction_roles(
+    fill_ids: &mut Vec<String>,
+    validate_role_id: &mut String,
+    position: usize,
+) {
+    if fill_ids.is_empty() {
+        fill_ids.push(STOCK_ROLE_DIRECTION_ID.to_string());
+    }
+    if position > 0 && validate_role_id.trim().is_empty() {
+        *validate_role_id = STOCK_ROLE_DIRECTION_ID.to_string();
+    }
+}
+
+async fn ensure_circuit_steps_default_direction_role(conn: &mut AnyConnection) -> Result<(), String> {
+    let steps = sqlx::query::<Any>(
+        "SELECT id, position, validate_role_id, fill_role_id, fill_role_ids_json FROM stock_circuit_step",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|e| e.to_string())?;
+    for r in steps {
+        let sid: String = r.try_get(0).unwrap_or_default();
+        let pos: i64 = r.try_get(1).unwrap_or(0);
+        let mut validate: String = r.try_get(2).unwrap_or_default();
+        let fill_one: String = r.try_get(3).unwrap_or_default();
+        let fill_json: String = r.try_get(4).unwrap_or_default();
+        let mut fill_ids = parse_fill_role_ids_json(&fill_json, &fill_one);
+        let before_fill = fill_ids.clone();
+        let before_validate = validate.clone();
+        ensure_circuit_step_interaction_roles(&mut fill_ids, &mut validate, pos as usize);
+        if fill_ids == before_fill && validate == before_validate {
+            continue;
+        }
+        let fill_role_id = fill_ids.first().cloned().unwrap_or_default();
+        let fill_role_ids_json = serde_json::to_string(&Value::Array(
+            fill_ids.iter().cloned().map(|s| json!(s)).collect(),
+        ))
+        .unwrap_or_else(|_| "[]".to_string());
+        sqlx::query::<Any>(
+            "UPDATE stock_circuit_step SET validate_role_id = ?1, fill_role_id = ?2, fill_role_ids_json = ?3 WHERE id = ?4",
+        )
+        .bind(&validate)
+        .bind(&fill_role_id)
+        .bind(&fill_role_ids_json)
+        .bind(&sid)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Plusieurs rôles peuvent remplir une étape : `fill_role_ids_json` (JSON `["id",…]`), `fill_role_id` = premier id (rétrocompat).
 async fn ensure_stock_circuit_step_fill_role_ids_json(conn: &mut AnyConnection) -> Result<(), String> {
     let cols = sqlx::query::<Any>("PRAGMA table_info(stock_circuit_step)")
@@ -799,11 +882,236 @@ async fn ensure_stock_collab_task_schema(conn: &mut AnyConnection) -> Result<(),
     .execute(&mut *conn)
     .await
     .map_err(|e| format!("stock_collab_task: {}", e))?;
+    sqlx::query::<Any>(
+        r#"CREATE TABLE IF NOT EXISTS stock_collab_task_history (
+            id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL DEFAULT '',
+            circuit_id TEXT NOT NULL DEFAULT '',
+            action TEXT NOT NULL,
+            actor_user_id TEXT NOT NULL DEFAULT '',
+            actor_role_id TEXT NOT NULL DEFAULT '',
+            note TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )"#,
+    )
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| format!("stock_collab_task_history: {}", e))?;
+    Ok(())
+}
+
+async fn collab_task_log_action(
+    conn: &mut AnyConnection,
+    task_id: &str,
+    circuit_id: &str,
+    action: &str,
+    actor_user_id: &str,
+    actor_role_id: &str,
+    note: &str,
+) -> Result<(), String> {
+    let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let hid = Uuid::new_v4().to_string();
+    sqlx::query::<Any>(
+        "INSERT INTO stock_collab_task_history (id, task_id, circuit_id, action, actor_user_id, actor_role_id, note, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    )
+    .bind(&hid)
+    .bind(task_id)
+    .bind(circuit_id)
+    .bind(action)
+    .bind(actor_user_id)
+    .bind(actor_role_id)
+    .bind(note)
+    .bind(&now)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 /// Modèles de formulaire réutilisables (sous-écran Circuits → Formulaires).
 pub(crate) const STOCK_SYSTEM_MOVEMENT_FORM_TEMPLATE_ID: &str = "f0000001-0001-4001-8001-000000000001";
+
+/// Clés d’écran pour les modèles de formulaires (alignées sur le menu stock principal).
+const FORM_TEMPLATE_SCREEN_KEYS: &[&str] = &[
+    "dashboard",
+    "articles",
+    "warehouse",
+    "movements",
+    "fournisseurs",
+    "clients",
+    "documents",
+    "circuits",
+    "general",
+];
+
+fn form_template_screen_label(screen: &str) -> &'static str {
+    match screen {
+        "dashboard" => "Tableau de bord",
+        "articles" => "Articles",
+        "warehouse" => "Entrepôt",
+        "movements" => "Mouvements",
+        "fournisseurs" => "Fournisseurs",
+        "clients" => "Clients",
+        "documents" => "Documents",
+        "circuits" => "Circuits",
+        "general" => "Générique (circuit / autre)",
+        _ => "Générique",
+    }
+}
+
+fn normalize_form_template_screen_type(raw: &str) -> String {
+    let s = raw.trim();
+    if FORM_TEMPLATE_SCREEN_KEYS.iter().any(|k| *k == s) {
+        return s.to_string();
+    }
+    "general".to_string()
+}
+
+fn default_form_fields_json_for_screen(screen: &str) -> String {
+    let arr = match screen {
+        "dashboard" => json!([
+            {"label": "Objet", "type": "text", "required": true},
+            {"label": "Commentaire", "type": "textarea", "required": false},
+        ]),
+        "articles" => json!([
+            {"label": "Article", "type": "article", "required": true},
+            {"label": "Catégorie", "type": "text", "required": false},
+            {"label": "Quantité", "type": "number", "required": false},
+        ]),
+        "warehouse" => json!([
+            {"label": "Entrepôt", "type": "warehouse", "required": true},
+            {"label": "Emplacement", "type": "location", "required": false},
+            {"label": "Notes", "type": "textarea", "required": false},
+        ]),
+        "movements" => json!([
+            {"id":"sys-mvt-article","label":"Article","type":"article","required":true,"locked":true},
+            {"id":"sys-mvt-type","label":"Type de mouvement","type":"text","required":true,"locked":true},
+            {"id":"sys-mvt-qty","label":"Quantité","type":"number","required":true,"locked":true},
+            {"id":"sys-mvt-reason","label":"Motif","type":"textarea","required":false,"locked":true},
+            {"id":"sys-mvt-ref","label":"Réf. document", "type": "text", "required": false, "locked": true},
+            {"id":"sys-mvt-supplier","label":"Fournisseur","type":"fournisseur","required":false,"locked":true},
+            {"id":"sys-mvt-client","label":"Client","type":"client","required":false,"locked":true},
+        ]),
+        "fournisseurs" => json!([
+            {"label": "Fournisseur", "type": "fournisseur", "required": true},
+            {"label": "Adresse", "type": "textarea", "required": false},
+            {"label": "Téléphone", "type": "text", "required": false},
+            {"label": "E-mail", "type": "text", "required": false},
+        ]),
+        "clients" => json!([
+            {"label": "Client", "type": "client", "required": true},
+            {"label": "Adresse", "type": "textarea", "required": false},
+            {"label": "Téléphone", "type": "text", "required": false},
+            {"label": "E-mail", "type": "text", "required": false},
+        ]),
+        "documents" => json!([
+            {"label": "Document", "type": "document", "required": true},
+            {"label": "Notes", "type": "textarea", "required": false},
+        ]),
+        "circuits" => json!([
+            {"label": "Circuit", "type": "circuit", "required": true},
+            {"label": "Détail", "type": "textarea", "required": false},
+        ]),
+        _ => json!([
+            {"label": "Libellé", "type": "text", "required": false},
+        ]),
+    };
+    serde_json::to_string(&arr).unwrap_or_else(|_| "[]".to_string())
+}
+
+async fn ensure_stock_form_template_screen_type_column(conn: &mut AnyConnection) -> Result<(), String> {
+    let cols = sqlx::query::<Any>("PRAGMA table_info(stock_form_template)")
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    let has = cols.iter().any(|r| {
+        r.try_get::<String, _>(1)
+            .map(|n| n.eq_ignore_ascii_case("screen_type"))
+            .unwrap_or(false)
+    });
+    if !has {
+        sqlx::query::<Any>(
+            "ALTER TABLE stock_form_template ADD COLUMN screen_type TEXT NOT NULL DEFAULT 'general'",
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Un modèle par écran du menu (INSERT OR IGNORE) + modèle système mouvements.
+async fn ensure_default_form_templates_per_screen(conn: &mut AnyConnection) -> Result<(), String> {
+    let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    const TPL_DASHBOARD: &str = "f0000002-0001-4002-8002-000000000001";
+    const TPL_ARTICLES: &str = "f0000002-0001-4002-8002-000000000002";
+    const TPL_WAREHOUSE: &str = "f0000002-0001-4002-8002-000000000003";
+    const TPL_FOURNISSEURS: &str = "f0000002-0001-4002-8002-000000000005";
+    const TPL_CLIENTS: &str = "f0000002-0001-4002-8002-000000000006";
+    const TPL_DOCUMENTS: &str = "f0000002-0001-4002-8002-000000000007";
+    const TPL_CIRCUITS: &str = "f0000002-0001-4002-8002-000000000008";
+    const TPL_GENERAL: &str = "f0000002-0001-4002-8002-000000000009";
+
+    let seeds: [(&str, &str, &str, i64); 9] = [
+        (TPL_DASHBOARD, "dashboard", "Formulaire — Tableau de bord", 0),
+        (TPL_ARTICLES, "articles", "Formulaire — Articles", 0),
+        (TPL_WAREHOUSE, "warehouse", "Formulaire — Entrepôt", 0),
+        (
+            STOCK_SYSTEM_MOVEMENT_FORM_TEMPLATE_ID,
+            "movements",
+            "Mouvement de stock",
+            1,
+        ),
+        (TPL_FOURNISSEURS, "fournisseurs", "Formulaire — Fournisseurs", 0),
+        (TPL_CLIENTS, "clients", "Formulaire — Clients", 0),
+        (TPL_DOCUMENTS, "documents", "Formulaire — Documents", 0),
+        (TPL_CIRCUITS, "circuits", "Formulaire — Circuits", 0),
+        (TPL_GENERAL, "general", "Formulaire — Générique", 0),
+    ];
+
+    for (id, screen, name, is_system) in seeds {
+        let fields_json = default_form_fields_json_for_screen(screen);
+        let desc = format!(
+            "Modèle de champs pour l’écran « {} ».",
+            form_template_screen_label(screen)
+        );
+        sqlx::query::<Any>(
+            "INSERT OR IGNORE INTO stock_form_template (id, name, description, fields_json, is_system, screen_type, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(&desc)
+        .bind(&fields_json)
+        .bind(is_system)
+        .bind(screen)
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        sqlx::query::<Any>(
+            "UPDATE stock_form_template SET screen_type = ?1 WHERE id = ?2 AND (trim(coalesce(screen_type,'')) = '' OR screen_type = 'general')",
+        )
+        .bind(screen)
+        .bind(id)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+
+    let movement_json = default_form_fields_json_for_screen("movements");
+    sqlx::query::<Any>(
+        "UPDATE stock_form_template SET screen_type = 'movements', fields_json = ?1 WHERE id = ?2 AND is_system = 1",
+    )
+    .bind(&movement_json)
+    .bind(STOCK_SYSTEM_MOVEMENT_FORM_TEMPLATE_ID)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
 
 async fn ensure_stock_form_template_schema(conn: &mut AnyConnection) -> Result<(), String> {
     sqlx::query::<Any>(
@@ -813,6 +1121,7 @@ async fn ensure_stock_form_template_schema(conn: &mut AnyConnection) -> Result<(
             description TEXT NOT NULL DEFAULT '',
             fields_json TEXT NOT NULL DEFAULT '[]',
             is_system INTEGER NOT NULL DEFAULT 0,
+            screen_type TEXT NOT NULL DEFAULT 'general',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             UNIQUE(name)
@@ -822,29 +1131,8 @@ async fn ensure_stock_form_template_schema(conn: &mut AnyConnection) -> Result<(
     .await
     .map_err(|e| format!("stock_form_template: {}", e))?;
 
-    let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let movement_json = serde_json::to_string(&json!([
-        {"id":"sys-mvt-article","label":"Article","type":"article","required":true,"locked":true},
-        {"id":"sys-mvt-type","label":"Type de mouvement","type":"text","required":true,"locked":true},
-        {"id":"sys-mvt-qty","label":"Quantité","type":"number","required":true,"locked":true},
-        {"id":"sys-mvt-reason","label":"Motif","type":"textarea","required":false,"locked":true},
-        {"id":"sys-mvt-ref","label":"Réf. document","type":"text","required":false,"locked":true},
-        {"id":"sys-mvt-supplier","label":"Fournisseur","type":"text","required":false,"locked":true},
-        {"id":"sys-mvt-client","label":"Client","type":"text","required":false,"locked":true},
-    ]))
-    .map_err(|e| e.to_string())?;
-    sqlx::query::<Any>(
-        "INSERT OR IGNORE INTO stock_form_template (id, name, description, fields_json, is_system, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6)",
-    )
-    .bind(STOCK_SYSTEM_MOVEMENT_FORM_TEMPLATE_ID)
-    .bind("Mouvement de stock")
-    .bind("Bloc obligatoire pour la saisie type mouvement d’article (entrée, sortie, ajustement).")
-    .bind(&movement_json)
-    .bind(&now)
-    .bind(&now)
-    .execute(&mut *conn)
-    .await
-    .map_err(|e| e.to_string())?;
+    ensure_stock_form_template_screen_type_column(conn).await?;
+    ensure_default_form_templates_per_screen(conn).await?;
     Ok(())
 }
 
@@ -1337,21 +1625,21 @@ fn doc_print_screen_label(screen: &str) -> &'static str {
 
 fn default_model_template_for_screen(screen: &str) -> (&'static str, &'static str) {
     let css = r#"
-.page { font-family: Arial, sans-serif; color: #1f2937; background: #fff; border: 1px solid #d6e4c8; }
+.page { font-family: Arial, sans-serif; color: #1f2937; background: #fff; border: 1px solid #d6e4c8; width: 754px; box-sizing: border-box; }
 .head { background: #8BC34A; color: #fff; padding: 18px 20px; display: flex; justify-content: space-between; align-items: center; }
 .logo { background: #fff; color: #4b7f23; border-radius: 20px; padding: 8px 14px; font-weight: 700; font-size: 12px; }
 .meta { text-align: right; font-size: 12px; line-height: 1.5; }
 .body { padding: 18px 20px 12px; }
 .title { font-size: 24px; margin: 0 0 8px; color: #4b7f23; text-transform: uppercase; }
 .sub { color: #6b7280; margin: 0 0 14px; font-size: 12px; }
-.kpi { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-bottom: 12px; }
+.kpi { display: grid; grid-template-columns: 244px 244px 244px; gap: 10px; margin-bottom: 12px; }
 .kpi .box { border: 1px solid #d1d5db; padding: 8px; border-radius: 6px; font-size: 12px; }
 .kpi .label { color: #6b7280; font-size: 11px; display: block; }
 .kpi .value { font-weight: 700; font-size: 13px; margin-top: 4px; display: block; }
-.tbl { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+.tbl { width: 754px; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
 .tbl th { background: #8BC34A; color: #fff; text-align: left; padding: 7px 8px; }
 .tbl td { border: 1px solid #e5e7eb; padding: 7px 8px; }
-.tot { margin-top: 12px; width: 260px; margin-left: auto; font-size: 12px; }
+.tot { margin-top: 12px; width: 260px; margin-left: 494px; font-size: 12px; }
 .tot .row { display: flex; justify-content: space-between; border-bottom: 1px solid #e5e7eb; padding: 6px 0; }
 .foot { border-top: 2px solid #8BC34A; margin-top: 16px; padding: 10px 20px; font-size: 11px; color: #6b7280; }
 "#;
@@ -1851,6 +2139,18 @@ pub async fn stock_delete_article(payload: String) -> Result<Value, String> {
     enc(&json!({ "success": r.rows_affected() > 0 }))
 }
 
+fn is_iso_date_ymd(s: &str) -> bool {
+    let t = s.trim();
+    if t.len() != 10 {
+        return false;
+    }
+    let b = t.as_bytes();
+    b[4] == b'-' && b[7] == b'-'
+        && b[..4].iter().all(|x| x.is_ascii_digit())
+        && b[5..7].iter().all(|x| x.is_ascii_digit())
+        && b[8..10].iter().all(|x| x.is_ascii_digit())
+}
+
 #[tauri::command]
 pub async fn stock_list_movements(payload: String) -> Result<Value, String> {
     let p = parse_or_empty(&payload);
@@ -1859,6 +2159,41 @@ pub async fn stock_list_movements(payload: String) -> Result<Value, String> {
         .as_ref()
         .and_then(|b| b.get("articleId"))
         .and_then(|v| v.as_str());
+    let date_from = p
+        .body
+        .as_ref()
+        .and_then(|b| b.get("dateFrom"))
+        .and_then(|v| v.as_str())
+        .filter(|s| is_iso_date_ymd(s))
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let date_to = p
+        .body
+        .as_ref()
+        .and_then(|b| b.get("dateTo"))
+        .and_then(|v| v.as_str())
+        .filter(|s| is_iso_date_ymd(s))
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let move_type_filter = p
+        .body
+        .as_ref()
+        .and_then(|b| b.get("moveType"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_uppercase())
+        .filter(|s| s == "IN" || s == "OUT" || s == "ADJ");
+
+    let limit_n = if article_filter.map(|a| !a.trim().is_empty()).unwrap_or(false)
+        && date_from.is_none()
+        && date_to.is_none()
+        && move_type_filter.is_none()
+    {
+        200
+    } else {
+        500
+    };
 
     let mut conn = stock_connect().await?;
     ensure_stock_schema(&mut conn).await?;
@@ -1866,47 +2201,42 @@ pub async fn stock_list_movements(payload: String) -> Result<Value, String> {
     let receipt_subcount = r#"(SELECT COUNT(*) FROM stock_document d WHERE d.movement_id IN (SELECT smx.id FROM stock_movement smx WHERE smx.batch_id = m.batch_id))"#;
     let receipt_subids = r#"IFNULL((SELECT GROUP_CONCAT(d.id, ',') FROM stock_document d WHERE d.movement_id IN (SELECT smx.id FROM stock_movement smx WHERE smx.batch_id = m.batch_id)), '')"#;
 
-    let rows = if let Some(aid) = article_filter {
-        if aid.is_empty() {
-            sqlx::query::<Any>(&format!(
-                r#"SELECT m.id, IFNULL(m.batch_id,''), m.line_no, m.article_id, a.sku, a.name, m.move_type, m.qty, m.reason, m.ref_doc,
-                          IFNULL(m.supplier_name,''), IFNULL(m.client_name,''), m.created_at, IFNULL(m.price_in,0), IFNULL(m.price_out,0),
-                          {},
-                          {}
-                   FROM stock_movement m JOIN stock_article a ON a.id = m.article_id
-                   ORDER BY m.created_at DESC, m.batch_id, m.line_no LIMIT 500"#,
-                receipt_subcount, receipt_subids
-            ))
-            .fetch_all(&mut conn)
-            .await
-        } else {
-            sqlx::query::<Any>(&format!(
-                r#"SELECT m.id, IFNULL(m.batch_id,''), m.line_no, m.article_id, a.sku, a.name, m.move_type, m.qty, m.reason, m.ref_doc,
-                          IFNULL(m.supplier_name,''), IFNULL(m.client_name,''), m.created_at, IFNULL(m.price_in,0), IFNULL(m.price_out,0),
-                          {},
-                          {}
-                   FROM stock_movement m JOIN stock_article a ON a.id = m.article_id
-                   WHERE m.article_id = ?1 ORDER BY m.created_at DESC, m.batch_id, m.line_no LIMIT 200"#,
-                receipt_subcount, receipt_subids
-            ))
-            .bind(aid)
-            .fetch_all(&mut conn)
-            .await
-        }
-    } else {
-        sqlx::query::<Any>(&format!(
-            r#"SELECT m.id, IFNULL(m.batch_id,''), m.line_no, m.article_id, a.sku, a.name, m.move_type, m.qty, m.reason, m.ref_doc,
+    let mut where_sql = String::from("WHERE 1=1");
+    let mut bind_vals: Vec<String> = Vec::new();
+
+    if let Some(aid) = article_filter.map(str::trim).filter(|s| !s.is_empty()) {
+        where_sql.push_str(" AND m.article_id = ?");
+        bind_vals.push(aid.to_string());
+    }
+    if let Some(df) = date_from {
+        where_sql.push_str(" AND m.created_at >= ?");
+        bind_vals.push(format!("{} 00:00:00", df));
+    }
+    if let Some(dt) = date_to {
+        where_sql.push_str(" AND m.created_at <= ?");
+        bind_vals.push(format!("{} 23:59:59", dt));
+    }
+    if let Some(mt) = move_type_filter {
+        where_sql.push_str(" AND m.move_type = ?");
+        bind_vals.push(mt);
+    }
+
+    let qstr = format!(
+        r#"SELECT m.id, IFNULL(m.batch_id,''), m.line_no, m.article_id, a.sku, a.name, m.move_type, m.qty, m.reason, m.ref_doc,
                       IFNULL(m.supplier_name,''), IFNULL(m.client_name,''), m.created_at, IFNULL(m.price_in,0), IFNULL(m.price_out,0),
                       {},
                       {}
                FROM stock_movement m JOIN stock_article a ON a.id = m.article_id
-               ORDER BY m.created_at DESC, m.batch_id, m.line_no LIMIT 500"#,
-            receipt_subcount, receipt_subids
-        ))
-        .fetch_all(&mut conn)
-        .await
+               {} ORDER BY m.created_at DESC, m.batch_id, m.line_no LIMIT {}"#,
+        receipt_subcount, receipt_subids, where_sql, limit_n
+    );
+
+    let mut q = sqlx::query::<Any>(&qstr);
+    for b in bind_vals {
+        q = q.bind(b);
     }
-    .map_err(|e| e.to_string())?;
+
+    let rows = q.fetch_all(&mut conn).await.map_err(|e| e.to_string())?;
 
     let mut list = Vec::new();
     for r in rows {
@@ -2353,7 +2683,7 @@ pub async fn stock_list_parties(payload: String) -> Result<Value, String> {
     let mut conn = stock_connect().await?;
     ensure_stock_schema(&mut conn).await?;
     let rows = sqlx::query::<Any>(
-        "SELECT id, kind, name, IFNULL(address,''), IFNULL(created_at,'') FROM stock_party WHERE kind = ?1 ORDER BY name COLLATE NOCASE",
+        "SELECT id, kind, name, IFNULL(address,''), IFNULL(phone,''), IFNULL(email,''), IFNULL(created_at,'') FROM stock_party WHERE kind = ?1 ORDER BY name COLLATE NOCASE",
     )
     .bind(&kind)
     .fetch_all(&mut conn)
@@ -2366,7 +2696,9 @@ pub async fn stock_list_parties(payload: String) -> Result<Value, String> {
             "kind": r.try_get::<String, _>(1).unwrap_or_default(),
             "name": r.try_get::<String, _>(2).unwrap_or_default(),
             "address": r.try_get::<String, _>(3).unwrap_or_default(),
-            "createdAt": r.try_get::<String, _>(4).unwrap_or_default(),
+            "phone": r.try_get::<String, _>(4).unwrap_or_default(),
+            "email": r.try_get::<String, _>(5).unwrap_or_default(),
+            "createdAt": r.try_get::<String, _>(6).unwrap_or_default(),
         }));
     }
     enc(&json!({ "parties": list }))
@@ -2393,6 +2725,8 @@ pub async fn stock_upsert_party(payload: String) -> Result<Value, String> {
     if address.is_empty() {
         return Err("Adresse requise".to_string());
     }
+    let phone = obj.get("phone").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let email = obj.get("email").and_then(|v| v.as_str()).unwrap_or("").trim();
     let mut conn = stock_connect().await?;
     ensure_stock_schema(&mut conn).await?;
     let existing_id = obj
@@ -2411,10 +2745,12 @@ pub async fn stock_upsert_party(payload: String) -> Result<Value, String> {
             return Err("Enregistrement introuvable".to_string());
         }
         sqlx::query::<Any>(
-            "UPDATE stock_party SET name = ?1, address = ?2 WHERE id = ?3 AND kind = ?4",
+            "UPDATE stock_party SET name = ?1, address = ?2, phone = ?3, email = ?4 WHERE id = ?5 AND kind = ?6",
         )
         .bind(name)
         .bind(address)
+        .bind(phone)
+        .bind(email)
         .bind(pid)
         .bind(&kind)
         .execute(&mut conn)
@@ -2431,12 +2767,14 @@ pub async fn stock_upsert_party(payload: String) -> Result<Value, String> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         sqlx::query::<Any>(
-            "INSERT OR IGNORE INTO stock_party (id, kind, name, address, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT OR IGNORE INTO stock_party (id, kind, name, address, phone, email, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )
         .bind(&id)
         .bind(&kind)
         .bind(name)
         .bind(address)
+        .bind(phone)
+        .bind(email)
         .bind(&now)
         .execute(&mut conn)
         .await
@@ -2611,7 +2949,7 @@ pub async fn stock_app_user_login(payload: String) -> Result<Value, String> {
     let mut conn = stock_connect().await?;
     ensure_stock_schema(&mut conn).await?;
     let row = sqlx::query::<Any>(
-        "SELECT id, login, display_name, address, password_hash, privileges_json, role_id FROM stock_app_user WHERE login = ?1 COLLATE NOCASE",
+        "SELECT id, login, display_name, email, address, password_hash, privileges_json, role_id FROM stock_app_user WHERE login = ?1 COLLATE NOCASE",
     )
     .bind(login_raw)
     .fetch_optional(&mut conn)
@@ -2623,10 +2961,11 @@ pub async fn stock_app_user_login(payload: String) -> Result<Value, String> {
     let id: String = row.try_get(0).map_err(|e| e.to_string())?;
     let login: String = row.try_get(1).map_err(|e| e.to_string())?;
     let display_name: String = row.try_get(2).unwrap_or_default();
-    let address: String = row.try_get(3).unwrap_or_default();
-    let hash: String = row.try_get(4).map_err(|e| e.to_string())?;
-    let priv_json: String = row.try_get(5).unwrap_or_else(|_| "[]".to_string());
-    let role_id: String = row.try_get(6).unwrap_or_default();
+    let email: String = row.try_get(3).unwrap_or_default();
+    let address: String = row.try_get(4).unwrap_or_default();
+    let hash: String = row.try_get(5).map_err(|e| e.to_string())?;
+    let priv_json: String = row.try_get(6).unwrap_or_else(|_| "[]".to_string());
+    let role_id: String = row.try_get(7).unwrap_or_default();
     if !verify_stock_password(password, &hash) {
         return Err("Identifiants incorrects".to_string());
     }
@@ -2652,6 +2991,7 @@ pub async fn stock_app_user_login(payload: String) -> Result<Value, String> {
         "loginOrLabel": label,
         "role": "stock_user",
         "stockPrivileges": privileges,
+        "email": email,
         "address": address,
         "stockRoleId": role_id,
     }))
@@ -2666,7 +3006,7 @@ pub async fn stock_list_app_users(payload: String) -> Result<Value, String> {
     let mut conn = stock_connect().await?;
     ensure_stock_schema(&mut conn).await?;
     let rows = sqlx::query::<Any>(
-        r#"SELECT u.id, u.login, u.display_name, u.address, u.privileges_json, u.created_at, u.role_id,
+        r#"SELECT u.id, u.login, u.display_name, u.email, u.address, u.privileges_json, u.created_at, u.role_id,
             COALESCE(NULLIF(trim(r.privileges_json), ''), '[]') AS role_privileges_json
             FROM stock_app_user u
             LEFT JOIN stock_role r ON r.id = u.role_id
@@ -2677,17 +3017,18 @@ pub async fn stock_list_app_users(payload: String) -> Result<Value, String> {
     .map_err(|e| e.to_string())?;
     let mut list = Vec::new();
     for r in rows {
-        let legacy_user_priv: String = r.try_get::<String, _>(4).unwrap_or_else(|_| "[]".to_string());
-        let role_id: String = r.try_get::<String, _>(6).unwrap_or_default();
-        let role_priv_json: String = r.try_get::<String, _>(7).unwrap_or_else(|_| "[]".to_string());
+        let legacy_user_priv: String = r.try_get::<String, _>(5).unwrap_or_else(|_| "[]".to_string());
+        let role_id: String = r.try_get::<String, _>(7).unwrap_or_default();
+        let role_priv_json: String = r.try_get::<String, _>(8).unwrap_or_else(|_| "[]".to_string());
         let privileges = effective_stock_privileges_resolved(&role_id, &legacy_user_priv, &role_priv_json);
         list.push(json!({
             "id": r.try_get::<String, _>(0).unwrap_or_default(),
             "login": r.try_get::<String, _>(1).unwrap_or_default(),
             "displayName": r.try_get::<String, _>(2).unwrap_or_default(),
-            "address": r.try_get::<String, _>(3).unwrap_or_default(),
+            "email": r.try_get::<String, _>(3).unwrap_or_default(),
+            "address": r.try_get::<String, _>(4).unwrap_or_default(),
             "privileges": privileges,
-            "createdAt": r.try_get::<String, _>(5).unwrap_or_default(),
+            "createdAt": r.try_get::<String, _>(6).unwrap_or_default(),
             "roleId": role_id,
         }));
     }
@@ -2711,6 +3052,7 @@ pub async fn stock_upsert_app_user(payload: String) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .trim();
+    let email = obj.get("email").and_then(|v| v.as_str()).unwrap_or("").trim();
     let address = obj.get("address").and_then(|v| v.as_str()).unwrap_or("").trim();
     let role_id = obj.get("roleId").and_then(|v| v.as_str()).unwrap_or("").trim();
     let password_plain = obj.get("password").and_then(|v| v.as_str()).unwrap_or("").trim();
@@ -2731,11 +3073,12 @@ pub async fn stock_upsert_app_user(payload: String) -> Result<Value, String> {
         };
         let hash = hash_stock_password(plain)?;
         sqlx::query::<Any>(
-            "INSERT INTO stock_app_user (id, login, display_name, address, password_hash, privileges_json, role_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO stock_app_user (id, login, display_name, email, address, password_hash, privileges_json, role_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         )
         .bind(&id)
         .bind(login)
         .bind(display_name)
+        .bind(email)
         .bind(address)
         .bind(&hash)
         .bind(&priv_json)
@@ -2777,10 +3120,11 @@ pub async fn stock_upsert_app_user(payload: String) -> Result<Value, String> {
             hash_stock_password(password_plain)?
         };
         sqlx::query::<Any>(
-            "UPDATE stock_app_user SET login = ?1, display_name = ?2, address = ?3, password_hash = ?4, privileges_json = ?5, role_id = ?6, updated_at = ?7 WHERE id = ?8",
+            "UPDATE stock_app_user SET login = ?1, display_name = ?2, email = ?3, address = ?4, password_hash = ?5, privileges_json = ?6, role_id = ?7, updated_at = ?8 WHERE id = ?9",
         )
         .bind(login)
         .bind(display_name)
+        .bind(email)
         .bind(address)
         .bind(&new_hash)
         .bind(&priv_json)
@@ -2819,6 +3163,100 @@ pub async fn stock_delete_app_user(payload: String) -> Result<Value, String> {
         .await
         .map_err(|e| e.to_string())?;
     enc(&json!({ "success": r.rows_affected() > 0 }))
+}
+
+/// Mise à jour du profil par l'utilisateur stock lui-même (nom affiché, adresse, mot de passe).
+#[tauri::command]
+pub async fn stock_update_own_profile(payload: String) -> Result<Value, String> {
+    let p = parse_or_empty(&payload);
+    let body = p.body.ok_or("Corps manquant")?;
+    let obj = body.as_object().ok_or("Body invalide")?;
+    let requester_id = obj
+        .get("requesterUserId")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .unwrap_or("");
+    let requester_role = obj
+        .get("requesterRole")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .unwrap_or("");
+    if requester_role != "stock_user" || requester_id.is_empty() {
+        return Err("Action réservée aux utilisateurs collaborateurs stock".to_string());
+    }
+    let target_id = obj.get("id").and_then(|v| v.as_str()).map(str::trim).unwrap_or("");
+    if target_id != requester_id {
+        return Err("Identifiant incorrect".to_string());
+    }
+    let current_password = obj
+        .get("currentPassword")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if current_password.is_empty() {
+        return Err("Mot de passe actuel requis".to_string());
+    }
+    let display_name = obj
+        .get("displayName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let email = obj.get("email").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let address = obj.get("address").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let new_password = obj
+        .get("newPassword")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+
+    let mut conn = stock_connect().await?;
+    ensure_stock_schema(&mut conn).await?;
+
+    let row = sqlx::query::<Any>(
+        "SELECT password_hash, login FROM stock_app_user WHERE id = ?1",
+    )
+    .bind(target_id)
+    .fetch_optional(&mut conn)
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(ex_row) = row else {
+        return Err("Utilisateur introuvable".to_string());
+    };
+    let old_hash: String = ex_row.try_get(0).map_err(|e| e.to_string())?;
+    let login_keep: String = ex_row.try_get(1).map_err(|e| e.to_string())?;
+    if !verify_stock_password(current_password, &old_hash) {
+        return Err("Mot de passe actuel incorrect".to_string());
+    }
+
+    let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let new_hash = if new_password.is_empty() {
+        old_hash
+    } else if new_password.len() < 8 {
+        return Err("Le nouveau mot de passe doit contenir au moins 8 caractères".to_string());
+    } else {
+        hash_stock_password(new_password)?
+    };
+
+    sqlx::query::<Any>(
+        "UPDATE stock_app_user SET display_name = ?1, email = ?2, address = ?3, password_hash = ?4, updated_at = ?5 WHERE id = ?6",
+    )
+    .bind(&display_name)
+    .bind(&email)
+    .bind(&address)
+    .bind(&new_hash)
+    .bind(&now)
+    .bind(target_id)
+    .execute(&mut conn)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    enc(&json!({
+        "success": true,
+        "loginOrLabel": if display_name.is_empty() { login_keep } else { display_name },
+        "email": email,
+        "address": address,
+    }))
 }
 
 #[tauri::command]
@@ -3203,10 +3641,17 @@ pub async fn stock_export_csv(payload: String) -> Result<Value, String> {
         "fournisseurs" => {
             csv_push_row(
                 &mut w,
-                &["id".into(), "name".into(), "address".into(), "createdAt".into()],
+                &[
+                    "id".into(),
+                    "name".into(),
+                    "address".into(),
+                    "phone".into(),
+                    "email".into(),
+                    "createdAt".into(),
+                ],
             );
             let rows = sqlx::query::<Any>(
-                "SELECT id, name, IFNULL(address,''), created_at FROM stock_party WHERE kind = 'SUPPLIER' ORDER BY name COLLATE NOCASE",
+                "SELECT id, name, IFNULL(address,''), IFNULL(phone,''), IFNULL(email,''), created_at FROM stock_party WHERE kind = 'SUPPLIER' ORDER BY name COLLATE NOCASE",
             )
             .fetch_all(&mut conn)
             .await
@@ -3219,6 +3664,8 @@ pub async fn stock_export_csv(payload: String) -> Result<Value, String> {
                         r.try_get::<String, _>(1).unwrap_or_default(),
                         r.try_get::<String, _>(2).unwrap_or_default(),
                         r.try_get::<String, _>(3).unwrap_or_default(),
+                        r.try_get::<String, _>(4).unwrap_or_default(),
+                        r.try_get::<String, _>(5).unwrap_or_default(),
                     ],
                 );
             }
@@ -3227,10 +3674,17 @@ pub async fn stock_export_csv(payload: String) -> Result<Value, String> {
         "clients" => {
             csv_push_row(
                 &mut w,
-                &["id".into(), "name".into(), "address".into(), "createdAt".into()],
+                &[
+                    "id".into(),
+                    "name".into(),
+                    "address".into(),
+                    "phone".into(),
+                    "email".into(),
+                    "createdAt".into(),
+                ],
             );
             let rows = sqlx::query::<Any>(
-                "SELECT id, name, IFNULL(address,''), created_at FROM stock_party WHERE kind = 'CLIENT' ORDER BY name COLLATE NOCASE",
+                "SELECT id, name, IFNULL(address,''), IFNULL(phone,''), IFNULL(email,''), created_at FROM stock_party WHERE kind = 'CLIENT' ORDER BY name COLLATE NOCASE",
             )
             .fetch_all(&mut conn)
             .await
@@ -3243,6 +3697,8 @@ pub async fn stock_export_csv(payload: String) -> Result<Value, String> {
                         r.try_get::<String, _>(1).unwrap_or_default(),
                         r.try_get::<String, _>(2).unwrap_or_default(),
                         r.try_get::<String, _>(3).unwrap_or_default(),
+                        r.try_get::<String, _>(4).unwrap_or_default(),
+                        r.try_get::<String, _>(5).unwrap_or_default(),
                     ],
                 );
             }
@@ -3506,12 +3962,29 @@ pub async fn stock_import_csv(payload: String) -> Result<Value, String> {
                         continue;
                     }
                 };
-                if row.len() < 2 {
-                    errors.push(format!("ligne {}: name et address requis", line_no + 2));
+                let ncol = row.len();
+                if ncol < 3 {
+                    errors.push(format!(
+                        "ligne {}: colonnes insuffisantes (attendu au minimum id, nom, adresse)",
+                        line_no + 2
+                    ));
                     continue;
                 }
-                let name = row.get(1).unwrap_or("").trim();
-                let address = row.get(2).unwrap_or("").trim();
+                let (name, address, phone, email) = if ncol >= 5 {
+                    (
+                        row.get(1).unwrap_or("").trim(),
+                        row.get(2).unwrap_or("").trim(),
+                        row.get(3).unwrap_or("").trim(),
+                        row.get(4).unwrap_or("").trim(),
+                    )
+                } else {
+                    (
+                        row.get(1).unwrap_or("").trim(),
+                        row.get(2).unwrap_or("").trim(),
+                        "",
+                        "",
+                    )
+                };
                 if name.is_empty() || address.is_empty() {
                     errors.push(format!("ligne {}: nom et adresse requis", line_no + 2));
                     continue;
@@ -3519,12 +3992,14 @@ pub async fn stock_import_csv(payload: String) -> Result<Value, String> {
                 let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
                 let id = Uuid::new_v4().to_string();
                 let r = sqlx::query::<Any>(
-                    "INSERT OR IGNORE INTO stock_party (id, kind, name, address, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT OR IGNORE INTO stock_party (id, kind, name, address, phone, email, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 )
                 .bind(&id)
                 .bind(kind)
                 .bind(name)
                 .bind(address)
+                .bind(phone)
+                .bind(email)
                 .bind(&now)
                 .execute(&mut conn)
                 .await;
@@ -3532,9 +4007,11 @@ pub async fn stock_import_csv(payload: String) -> Result<Value, String> {
                     Ok(x) if x.rows_affected() > 0 => inserted += 1,
                     Ok(_) => {
                         let _ = sqlx::query::<Any>(
-                            "UPDATE stock_party SET address = ?1 WHERE kind = ?2 AND name = ?3 COLLATE NOCASE",
+                            "UPDATE stock_party SET address = ?1, phone = ?2, email = ?3 WHERE kind = ?4 AND name = ?5 COLLATE NOCASE",
                         )
                         .bind(address)
+                        .bind(phone)
+                        .bind(email)
                         .bind(kind)
                         .bind(name)
                         .execute(&mut conn)
@@ -4427,6 +4904,100 @@ pub async fn stock_list_circuits(_payload: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
+pub async fn stock_list_role_circuit_entries(payload: String) -> Result<Value, String> {
+    let p = parse_or_empty(&payload);
+    let body = p.body.ok_or("Corps manquant")?;
+    let obj = body.as_object().ok_or("Body invalide")?;
+    let requester_user_id = obj
+        .get("requesterUserId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if requester_user_id.is_empty() {
+        return Err("requesterUserId requis".to_string());
+    }
+    let requester_is_sadmin = obj
+        .get("requesterRole")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .eq_ignore_ascii_case("sadmin");
+    let mut conn = stock_connect().await?;
+    ensure_stock_schema(&mut conn).await?;
+    let requester_role_id = stock_user_role_id(&mut conn, requester_user_id).await?;
+
+    let rows = sqlx::query::<Any>(
+        "SELECT c.id, c.name, c.active, s.position, s.fill_role_id, s.fill_role_ids_json, s.validate_role_id
+         FROM stock_circuit c
+         JOIN stock_circuit_step s ON s.circuit_id = c.id
+         ORDER BY c.name COLLATE NOCASE, s.position ASC",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .map_err(|e| e.to_string())?;
+    let mut best: BTreeMap<String, Value> = BTreeMap::new();
+    for r in rows {
+        let cid: String = r.try_get(0).unwrap_or_default();
+        let cname: String = r.try_get(1).unwrap_or_default();
+        let active: bool = r.try_get::<i64, _>(2).unwrap_or(1) != 0;
+        let pos: i64 = r.try_get(3).unwrap_or(0);
+        let fill_legacy: String = r.try_get(4).unwrap_or_default();
+        let fill_json: String = r.try_get(5).unwrap_or_else(|_| "[]".to_string());
+        let validate_role_id: String = r.try_get(6).unwrap_or_default();
+        let fill_ids = parse_fill_role_ids_json(&fill_json, &fill_legacy);
+        let can_do = if requester_is_sadmin {
+            true
+        } else {
+            let rid = requester_role_id.trim();
+            (!rid.is_empty() && fill_ids.iter().any(|x| x == rid))
+                || (!rid.is_empty() && validate_role_id.trim() == rid)
+        };
+        if !can_do {
+            continue;
+        }
+        if !best.contains_key(&cid) {
+            best.insert(
+                cid.clone(),
+                json!({
+                    "circuitId": cid,
+                    "circuitName": cname,
+                    "active": active,
+                    "firstStepIndex": pos,
+                    "canStart": pos == 0,
+                }),
+            );
+        }
+    }
+    enc(&json!({ "entries": best.into_values().collect::<Vec<_>>() }))
+}
+
+#[tauri::command]
+pub async fn stock_set_circuit_active(payload: String) -> Result<Value, String> {
+    let p = parse_or_empty(&payload);
+    let body = p.body.ok_or("Corps manquant")?;
+    let obj = body.as_object().ok_or("Body invalide")?;
+    let id = obj
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("id requis")?;
+    let active = obj.get("active").and_then(|v| v.as_bool()).unwrap_or(true);
+    let mut conn = stock_connect().await?;
+    ensure_stock_schema(&mut conn).await?;
+    let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let r = sqlx::query::<Any>(
+        "UPDATE stock_circuit SET active = ?1, updated_at = ?2 WHERE id = ?3",
+    )
+    .bind(if active { 1i64 } else { 0i64 })
+    .bind(&now)
+    .bind(id)
+    .execute(&mut conn)
+    .await
+    .map_err(|e| e.to_string())?;
+    enc(&json!({ "success": r.rows_affected() > 0 }))
+}
+
+#[tauri::command]
 pub async fn stock_get_circuit(payload: String) -> Result<Value, String> {
     let p = parse_or_empty(&payload);
     let id = p
@@ -4550,7 +5121,7 @@ pub async fn stock_upsert_circuit(payload: String) -> Result<Value, String> {
             Some(v) => serde_json::to_string(v).unwrap_or_else(|_| "[]".to_string()),
             None => "[]".to_string(),
         };
-        let validate_role_id = so
+        let mut validate_role_id = so
             .get("validateRoleId")
             .and_then(|v| v.as_str())
             .unwrap_or("")
@@ -4575,23 +5146,12 @@ pub async fn stock_upsert_circuit(payload: String) -> Result<Value, String> {
                 }
             }
         }
-        if fill_ids.is_empty() {
-            return Err(format!(
-                "Étape {} : au moins un rôle de remplissage est requis",
-                pos + 1
-            ));
-        }
+        ensure_circuit_step_interaction_roles(&mut fill_ids, &mut validate_role_id, pos);
         let fill_role_id = fill_ids.get(0).cloned().unwrap_or_default();
         let fill_role_ids_json = serde_json::to_string(&Value::Array(
             fill_ids.iter().cloned().map(|s| json!(s)).collect(),
         ))
         .unwrap_or_else(|_| "[]".to_string());
-        if pos > 0 && validate_role_id.is_empty() {
-            return Err(format!(
-                "Étape {} : rôle validateur du formulaire précédent requis",
-                pos + 1
-            ));
-        }
         let sid = Uuid::new_v4().to_string();
         sqlx::query::<Any>(
             "INSERT INTO stock_circuit_step (id, circuit_id, position, title, fields_json, validate_role_id, fill_role_id, fill_role_ids_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -4694,6 +5254,25 @@ pub async fn stock_list_collab_tasks(payload: String) -> Result<Value, String> {
         ) {
             continue;
         }
+        let hrows = sqlx::query::<Any>(
+            "SELECT action, note, actor_user_id, actor_role_id, created_at FROM stock_collab_task_history WHERE task_id = ?1 ORDER BY created_at ASC",
+        )
+        .bind(&id)
+        .fetch_all(&mut conn)
+        .await
+        .unwrap_or_default();
+        let history: Vec<Value> = hrows
+            .into_iter()
+            .map(|hr| {
+                json!({
+                    "action": hr.try_get::<String, _>(0).unwrap_or_default(),
+                    "note": hr.try_get::<String, _>(1).unwrap_or_default(),
+                    "actorUserId": hr.try_get::<String, _>(2).unwrap_or_default(),
+                    "actorRoleId": hr.try_get::<String, _>(3).unwrap_or_default(),
+                    "at": hr.try_get::<String, _>(4).unwrap_or_default(),
+                })
+            })
+            .collect();
         list.push(json!({
             "id": id,
             "title": title,
@@ -4708,6 +5287,7 @@ pub async fn stock_list_collab_tasks(payload: String) -> Result<Value, String> {
             "circuitStepIndex": circuit_step_index,
             "createdAt": created_at,
             "updatedAt": updated_at,
+            "history": history,
         }));
     }
     enc(&json!({ "tasks": list }))
@@ -4846,7 +5426,7 @@ pub async fn stock_complete_collab_task(payload: String) -> Result<Value, String
     let requester_role_id = stock_user_role_id(&mut conn, requester_user_id).await?;
 
     let row = sqlx::query::<Any>(
-        "SELECT created_by_user_id, visibility, visible_role_id, kind FROM stock_collab_task WHERE id = ?1 AND status = 'pending'",
+        "SELECT created_by_user_id, visibility, visible_role_id, kind, circuit_id, circuit_step_index FROM stock_collab_task WHERE id = ?1 AND status = 'pending'",
     )
     .bind(id)
     .fetch_optional(&mut conn)
@@ -4859,6 +5439,8 @@ pub async fn stock_complete_collab_task(payload: String) -> Result<Value, String
     let visibility: String = r.try_get(1).unwrap_or_default();
     let visible_role_id: String = r.try_get(2).unwrap_or_default();
     let kind: String = r.try_get(3).unwrap_or_default();
+    let circuit_id: String = r.try_get(4).unwrap_or_default();
+    let circuit_step_index: i64 = r.try_get(5).unwrap_or(-1);
     if !collab_task_visible_to(
         requester_is_sadmin,
         requester_user_id,
@@ -4878,7 +5460,185 @@ pub async fn stock_complete_collab_task(payload: String) -> Result<Value, String
         .execute(&mut conn)
         .await
         .map_err(|e| e.to_string())?;
+    let _ = collab_task_log_action(
+        &mut conn,
+        id,
+        &circuit_id,
+        "completed",
+        requester_user_id,
+        &requester_role_id,
+        "Tâche complétée",
+    )
+    .await;
+
+    if u.rows_affected() > 0 && (kind == "circuit_fill" || kind == "circuit_validate") && !circuit_id.trim().is_empty() && circuit_step_index >= 0 {
+        if kind == "circuit_fill" {
+            let srow = sqlx::query::<Any>(
+                "SELECT title, validate_role_id FROM stock_circuit_step WHERE circuit_id = ?1 AND position = ?2",
+            )
+            .bind(&circuit_id)
+            .bind(circuit_step_index)
+            .fetch_optional(&mut conn)
+            .await
+            .map_err(|e| e.to_string())?;
+            if let Some(sr) = srow {
+                let step_title: String = sr.try_get(0).unwrap_or_default();
+                let validate_role_id: String = sr.try_get(1).unwrap_or_default();
+                if !validate_role_id.trim().is_empty() {
+                    let cname: String = sqlx::query::<Any>("SELECT name FROM stock_circuit WHERE id = ?1")
+                        .bind(&circuit_id)
+                        .fetch_optional(&mut conn)
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .and_then(|r| r.try_get::<String, _>(0).ok())
+                        .unwrap_or_default();
+                    let title = format!("En attente de validation : {} — {}", cname.trim(), step_title.trim());
+                    let new_id = Uuid::new_v4().to_string();
+                    let at = Utc::now().to_rfc3339();
+                    sqlx::query::<Any>(
+                        r#"INSERT INTO stock_collab_task (id, title, description, at, status, kind, visibility, created_by_user_id, visible_role_id, circuit_id, circuit_step_index, created_at, updated_at)
+                           VALUES (?1, ?2, '', ?3, 'pending', 'circuit_validate', 'role', ?4, ?5, ?6, ?7, ?8, ?9)"#,
+                    )
+                    .bind(&new_id)
+                    .bind(&title)
+                    .bind(&at)
+                    .bind(requester_user_id)
+                    .bind(validate_role_id.trim())
+                    .bind(&circuit_id)
+                    .bind(circuit_step_index)
+                    .bind(&now)
+                    .bind(&now)
+                    .execute(&mut conn)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                    let _ = collab_task_log_action(
+                        &mut conn,
+                        &new_id,
+                        &circuit_id,
+                        "created",
+                        requester_user_id,
+                        &requester_role_id,
+                        "Tâche de validation créée automatiquement",
+                    )
+                    .await;
+                } else {
+                    let _ = create_circuit_fill_tasks_for_step(
+                        &mut conn,
+                        &circuit_id,
+                        circuit_step_index + 1,
+                        requester_user_id,
+                        &requester_role_id,
+                    )
+                    .await?;
+                }
+            }
+        } else if kind == "circuit_validate" {
+            let next_created = create_circuit_fill_tasks_for_step(
+                &mut conn,
+                &circuit_id,
+                circuit_step_index + 1,
+                requester_user_id,
+                &requester_role_id,
+            )
+            .await?;
+            if next_created.is_empty() {
+                let _ = collab_task_log_action(
+                    &mut conn,
+                    id,
+                    &circuit_id,
+                    "circuit_completed",
+                    requester_user_id,
+                    &requester_role_id,
+                    "Circuit terminé",
+                )
+                .await;
+            }
+        }
+    }
     enc(&json!({ "success": u.rows_affected() > 0 }))
+}
+
+async fn create_circuit_fill_tasks_for_step(
+    conn: &mut AnyConnection,
+    circuit_id: &str,
+    step_index: i64,
+    created_by_user_id: &str,
+    actor_role_id: &str,
+) -> Result<Vec<String>, String> {
+    let crow = sqlx::query::<Any>("SELECT name FROM stock_circuit WHERE id = ?1")
+        .bind(circuit_id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(cr) = crow else {
+        return Ok(vec![]);
+    };
+    let circuit_name: String = cr.try_get(0).unwrap_or_default();
+    let srow = sqlx::query::<Any>(
+        "SELECT title, fill_role_id, fill_role_ids_json FROM stock_circuit_step WHERE circuit_id = ?1 AND position = ?2",
+    )
+    .bind(circuit_id)
+    .bind(step_index)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(sr) = srow else {
+        return Ok(vec![]);
+    };
+    let step_title: String = sr.try_get(0).unwrap_or_default();
+    let fill_role_id: String = sr.try_get(1).unwrap_or_default();
+    let fill_role_ids_json: String = sr.try_get(2).unwrap_or_else(|_| "[]".to_string());
+    let fill_ids = parse_fill_role_ids_json(&fill_role_ids_json, &fill_role_id);
+    if fill_ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let at = Utc::now().to_rfc3339();
+    let mut ids: Vec<String> = Vec::new();
+    for rid in &fill_ids {
+        let role_label: String = sqlx::query::<Any>("SELECT name FROM stock_role WHERE id = ?1")
+            .bind(rid)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?
+            .and_then(|r| r.try_get::<String, _>(0).ok())
+            .unwrap_or_else(|| rid.clone());
+        let title = format!(
+            "En attente de complétion du circuit par {} : {} — {}",
+            role_label.trim(),
+            circuit_name.trim(),
+            step_title.trim()
+        );
+        let new_id = Uuid::new_v4().to_string();
+        sqlx::query::<Any>(
+            r#"INSERT INTO stock_collab_task (id, title, description, at, status, kind, visibility, created_by_user_id, visible_role_id, circuit_id, circuit_step_index, created_at, updated_at)
+               VALUES (?1, ?2, '', ?3, 'pending', 'circuit_fill', 'role', ?4, ?5, ?6, ?7, ?8, ?9)"#,
+        )
+        .bind(&new_id)
+        .bind(&title)
+        .bind(&at)
+        .bind(created_by_user_id)
+        .bind(rid)
+        .bind(circuit_id)
+        .bind(step_index)
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+        collab_task_log_action(
+            conn,
+            &new_id,
+            circuit_id,
+            "created",
+            created_by_user_id,
+            actor_role_id,
+            "Tâche de remplissage créée automatiquement",
+        )
+        .await?;
+        ids.push(new_id);
+    }
+    Ok(ids)
 }
 
 #[tauri::command]
@@ -4922,6 +5682,7 @@ pub async fn stock_create_circuit_step_collab_task(payload: String) -> Result<Va
 
     let mut conn = stock_connect().await?;
     ensure_stock_schema(&mut conn).await?;
+    let requester_role_id = stock_user_role_id(&mut conn, requester_user_id).await?;
 
     let crow = sqlx::query::<Any>("SELECT name FROM stock_circuit WHERE id = ?1")
         .bind(circuit_id)
@@ -5009,6 +5770,16 @@ pub async fn stock_create_circuit_step_collab_task(payload: String) -> Result<Va
             .execute(&mut conn)
             .await
             .map_err(|e| e.to_string())?;
+            let _ = collab_task_log_action(
+                &mut conn,
+                &new_id,
+                circuit_id,
+                "created",
+                requester_user_id,
+                &requester_role_id,
+                "Tâche de remplissage créée",
+            )
+            .await;
             last_new_id = new_id;
         }
     } else {
@@ -5031,6 +5802,16 @@ pub async fn stock_create_circuit_step_collab_task(payload: String) -> Result<Va
         .execute(&mut conn)
         .await
         .map_err(|e| e.to_string())?;
+        let _ = collab_task_log_action(
+            &mut conn,
+            &new_id,
+            circuit_id,
+            "created",
+            requester_user_id,
+            &requester_role_id,
+            "Tâche de validation créée",
+        )
+        .await;
         last_new_id = new_id;
     }
 
@@ -5042,7 +5823,7 @@ pub async fn stock_list_form_templates(_payload: String) -> Result<Value, String
     let mut conn = stock_connect().await?;
     ensure_stock_schema(&mut conn).await?;
     let rows = sqlx::query::<Any>(
-        "SELECT id, name, description, fields_json, is_system, created_at, updated_at FROM stock_form_template ORDER BY is_system DESC, name COLLATE NOCASE",
+        "SELECT id, name, description, fields_json, is_system, screen_type, created_at, updated_at FROM stock_form_template ORDER BY screen_type COLLATE NOCASE, is_system DESC, name COLLATE NOCASE",
     )
     .fetch_all(&mut conn)
     .await
@@ -5055,8 +5836,9 @@ pub async fn stock_list_form_templates(_payload: String) -> Result<Value, String
             "description": r.try_get::<String, _>(2).unwrap_or_default(),
             "fieldsJson": r.try_get::<String, _>(3).unwrap_or_else(|_| "[]".to_string()),
             "isSystem": r.try_get::<i64, _>(4).unwrap_or(0) != 0,
-            "createdAt": r.try_get::<String, _>(5).unwrap_or_default(),
-            "updatedAt": r.try_get::<String, _>(6).unwrap_or_default(),
+            "screenType": normalize_form_template_screen_type(&r.try_get::<String, _>(5).unwrap_or_default()),
+            "createdAt": r.try_get::<String, _>(6).unwrap_or_default(),
+            "updatedAt": r.try_get::<String, _>(7).unwrap_or_default(),
         }));
     }
     enc(&json!({ "templates": list }))
@@ -5075,7 +5857,7 @@ pub async fn stock_get_form_template(payload: String) -> Result<Value, String> {
     let mut conn = stock_connect().await?;
     ensure_stock_schema(&mut conn).await?;
     let row = sqlx::query::<Any>(
-        "SELECT id, name, description, fields_json, is_system, created_at, updated_at FROM stock_form_template WHERE id = ?1",
+        "SELECT id, name, description, fields_json, is_system, screen_type, created_at, updated_at FROM stock_form_template WHERE id = ?1",
     )
     .bind(id)
     .fetch_optional(&mut conn)
@@ -5091,8 +5873,9 @@ pub async fn stock_get_form_template(payload: String) -> Result<Value, String> {
             "description": r.try_get::<String, _>(2).unwrap_or_default(),
             "fieldsJson": r.try_get::<String, _>(3).unwrap_or_else(|_| "[]".to_string()),
             "isSystem": r.try_get::<i64, _>(4).unwrap_or(0) != 0,
-            "createdAt": r.try_get::<String, _>(5).unwrap_or_default(),
-            "updatedAt": r.try_get::<String, _>(6).unwrap_or_default(),
+            "screenType": normalize_form_template_screen_type(&r.try_get::<String, _>(5).unwrap_or_default()),
+            "createdAt": r.try_get::<String, _>(6).unwrap_or_default(),
+            "updatedAt": r.try_get::<String, _>(7).unwrap_or_default(),
         }
     }))
 }
@@ -5108,6 +5891,12 @@ pub async fn stock_upsert_form_template(payload: String) -> Result<Value, String
         return Err("Nom du modèle requis".to_string());
     }
     let description = obj.get("description").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let screen_type = normalize_form_template_screen_type(
+        obj.get("screenType")
+            .or_else(|| obj.get("screen_type"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("general"),
+    );
     let fields_val = obj.get("fieldsJson").cloned().unwrap_or(Value::Array(vec![]));
     let fields_arr = fields_val.as_array().cloned().unwrap_or_default();
     let fields_json = serde_json::to_string(&Value::Array(fields_arr)).map_err(|e| e.to_string())?;
@@ -5127,11 +5916,12 @@ pub async fn stock_upsert_form_template(payload: String) -> Result<Value, String
             return Err("Le modèle « Mouvement de stock » est fourni par l’application et ne peut pas être modifié.".to_string());
         }
         sqlx::query::<Any>(
-            "UPDATE stock_form_template SET name = ?1, description = ?2, fields_json = ?3, updated_at = ?4 WHERE id = ?5",
+            "UPDATE stock_form_template SET name = ?1, description = ?2, fields_json = ?3, screen_type = ?4, updated_at = ?5 WHERE id = ?6",
         )
         .bind(name)
         .bind(description)
         .bind(&fields_json)
+        .bind(&screen_type)
         .bind(&now)
         .bind(id_in)
         .execute(&mut conn)
@@ -5148,12 +5938,13 @@ pub async fn stock_upsert_form_template(payload: String) -> Result<Value, String
 
     let new_id = Uuid::new_v4().to_string();
     sqlx::query::<Any>(
-        "INSERT INTO stock_form_template (id, name, description, fields_json, is_system, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6)",
+        "INSERT INTO stock_form_template (id, name, description, fields_json, is_system, screen_type, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7)",
     )
     .bind(&new_id)
     .bind(name)
     .bind(description)
     .bind(&fields_json)
+    .bind(&screen_type)
     .bind(&now)
     .bind(&now)
     .execute(&mut conn)

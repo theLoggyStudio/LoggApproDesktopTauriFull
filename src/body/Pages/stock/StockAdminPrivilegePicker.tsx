@@ -14,13 +14,19 @@ export type PrivilegeGroup = { title: string; keys: readonly string[] };
 const PRIV_LABEL_INDEX: Record<(typeof STOCK_EDITABLE_PRIVILEGE_KEYS)[number], number> = {
   dashboard: 14,
   articles: 15,
+  articles_units: 79,
+  articles_categories: 80,
+  articles_devises: 81,
   warehouse: 26,
   movements: 16,
   fournisseurs: 17,
   clients: 18,
   documents: 40,
+  documents_models: 82,
   circuits: 71,
+  circuits_forms: 83,
   roles: 72,
+  user: 22,
   settings: 19,
 };
 
@@ -61,6 +67,7 @@ const PRIV_DOC_LABEL_INDEX: Record<(typeof STOCK_DOCUMENT_PRIVILEGE_KEYS)[number
   documents_import_pdf: 48,
   documents_export_pdf: 49,
   documents_delete_pdf: 50,
+  documents_print_models_manage: 78,
 };
 
 export function useStockAdminPrivilegeGroups() {
@@ -88,7 +95,7 @@ export function useStockAdminPrivilegeGroups() {
       { title: U[65], keys: ["ref_categories_import", "ref_categories_export"] },
       { title: U[70], keys: ["ref_currencies_import", "ref_currencies_export"] },
       { title: U[66], keys: STOCK_DOCUMENT_PRIVILEGE_KEYS },
-      { title: U[75], keys: ["circuits", "circuits_manage"] },
+      { title: U[75], keys: ["circuits", "circuits_forms", "circuits_manage"] },
       { title: U[76], keys: ["roles", "roles_manage"] },
     ],
     [U],
@@ -102,7 +109,6 @@ export function useStockAdminPrivilegeGroups() {
       if (ik in PRIV_IO_LABEL_INDEX) return U[PRIV_IO_LABEL_INDEX[ik]] ?? key;
       const dk = key as keyof typeof PRIV_DOC_LABEL_INDEX;
       if (dk in PRIV_DOC_LABEL_INDEX) return U[PRIV_DOC_LABEL_INDEX[dk]] ?? key;
-      if (key === "user") return U[22];
       return key;
     },
     [U],
