@@ -8,9 +8,8 @@ import {
   Typography,
   Space,
   Descriptions,
-  Tag,
 } from "antd";
-import { Button, Modal, Select, Table } from "../../../items";
+import { Button, FileDropZone, Modal, Select, Table } from "../../../items";
 import { CopyOutlined, MinusCircleOutlined, PlusOutlined, PrinterOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
@@ -20,6 +19,7 @@ import {
   fetchMovements,
   fetchParties,
   fetchRefItems,
+  fetchWarehouseStock,
   addMovement,
   saveArticle,
   upsertParty,
@@ -81,6 +81,9 @@ export default function StockMovements() {
   const [detailMovement, setDetailMovement] = useState<StockMovement | null>(null);
   const [suppliers, setSuppliers] = useState<{ value: string }[]>([]);
   const [clients, setClients] = useState<{ value: string }[]>([]);
+  const [warehouses, setWarehouses] = useState<{ id: string; name: string }[]>([]);
+  /** Stock par article dans l'emplacement source (transferts). */
+  const [sourceWhStock, setSourceWhStock] = useState<Record<string, number>>({});
   const [articleQuickOpen, setArticleQuickOpen] = useState(false);
   const [partyQuickKind, setPartyQuickKind] = useState<"SUPPLIER" | "CLIENT" | null>(null);
   const articleQuickSourceRef = useRef<"filter" | "form">("form");
@@ -91,6 +94,8 @@ export default function StockMovements() {
     refDoc?: string;
     supplierName?: string;
     clientName?: string;
+    warehouseFromId?: string;
+    warehouseToId?: string;
     lines: { articleId: string; qty: number; priceIn?: number; priceOut?: number }[];
   }>();
   const [articleQuickForm] = Form.useForm<{ sku: string; name: string; category?: string }>();
@@ -101,6 +106,8 @@ export default function StockMovements() {
   const canPrint = canPrintStockMovements(session);
 
   const moveTypeWatch = Form.useWatch("moveType", form);
+  const warehouseFromWatch = Form.useWatch("warehouseFromId", form);
+  const linesWatch = Form.useWatch("lines", form);
 
   const movementBatchKey = useCallback((m: StockMovement) => m.batchId || m.id, []);
 
@@ -119,6 +126,12 @@ export default function StockMovements() {
       setSuppliers(rows.map((p) => ({ value: p.name }))),
     );
     fetchParties("CLIENT").then((rows) => setClients(rows.map((p) => ({ value: p.name }))));
+  }, []);
+
+  const loadWarehouses = useCallback(() => {
+    fetchRefItems("warehouse").then((rows) =>
+      setWarehouses(rows.map((w) => ({ id: w.id, name: w.name }))),
+    );
   }, []);
 
   const loadArts = useCallback(() => {
@@ -173,25 +186,70 @@ export default function StockMovements() {
   useEffect(() => {
     loadArts();
     loadParties();
-  }, [loadArts, loadParties]);
+    loadWarehouses();
+  }, [loadArts, loadParties, loadWarehouses]);
 
   useEffect(() => {
     loadMoves();
   }, [loadMoves]);
 
   useEffect(() => {
-    if (modalOpen) loadParties();
-  }, [modalOpen, loadParties]);
+    if (modalOpen) {
+      loadParties();
+      loadWarehouses();
+    }
+  }, [modalOpen, loadParties, loadWarehouses]);
 
   useEffect(() => {
     if (modalOpen) setReceiptFiles([]);
   }, [modalOpen]);
+
+  useEffect(() => {
+    if (moveTypeWatch !== "XFER" || !warehouseFromWatch) {
+      setSourceWhStock({});
+      return;
+    }
+    let cancelled = false;
+    fetchWarehouseStock(warehouseFromWatch)
+      .then((r) => {
+        if (!cancelled) setSourceWhStock(r.byArticleId);
+      })
+      .catch(() => {
+        if (!cancelled) setSourceWhStock({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [moveTypeWatch, warehouseFromWatch, modalOpen]);
+
+  /** Plafonne les quantités de ligne au stock de l'emplacement source. */
+  useEffect(() => {
+    if (moveTypeWatch !== "XFER") return;
+    const lines = form.getFieldValue("lines") as
+      | { articleId?: string; qty?: number; priceIn?: number; priceOut?: number }[]
+      | undefined;
+    if (!lines?.length) return;
+    let changed = false;
+    const next = lines.map((row) => {
+      const aid = row.articleId;
+      if (!aid) return row;
+      const max = sourceWhStock[aid] ?? 0;
+      const q = Number(row.qty) || 0;
+      if (q > max) {
+        changed = true;
+        return { ...row, qty: max > 0 ? max : 0 };
+      }
+      return row;
+    });
+    if (changed) form.setFieldsValue({ lines: next });
+  }, [sourceWhStock, moveTypeWatch, linesWatch, form]);
 
   const moveOptions = useMemo(
     () => [
       { value: "IN", label: T[11] },
       { value: "OUT", label: T[12] },
       { value: "ADJ", label: T[13] },
+      { value: "XFER", label: T[40] },
     ],
     [T],
   );
@@ -201,13 +259,28 @@ export default function StockMovements() {
     if (u === "IN") return T[11];
     if (u === "OUT") return T[12];
     if (u === "ADJ") return T[13];
+    if (u === "XFER") return T[40];
     return v;
+  };
+
+  const moveTypeColor = (v: string) => {
+    const u = v.toUpperCase();
+    if (u === "IN") return "#52c41a";
+    if (u === "OUT") return "#ff4d4f";
+    if (u === "XFER") return "#722ed1";
+    return "#1677ff";
   };
 
   const tiersCell = (r: StockMovement) => {
     const t = r.moveType?.toUpperCase();
     if (t === "IN") return r.supplierName ?? "";
     if (t === "OUT") return r.clientName ?? "";
+    if (t === "XFER") {
+      const from = r.warehouseFromName || r.warehouseFromId || "";
+      const to = r.warehouseToName || r.warehouseToId || "";
+      if (!from && !to) return "";
+      return `${from} → ${to}`;
+    }
     return "";
   };
 
@@ -278,6 +351,19 @@ export default function StockMovements() {
     if (!v) return;
     const receipts = receiptFiles.slice(0, 3);
     const mt = v.moveType?.toUpperCase() ?? "";
+    if (mt === "XFER" && v.warehouseFromId && v.warehouseFromId === v.warehouseToId) {
+      message.error(T[45]);
+      return;
+    }
+    if (mt === "XFER") {
+      for (const row of v.lines ?? []) {
+        const max = sourceWhStock[row.articleId] ?? 0;
+        if (Number(row.qty) > max) {
+          message.error(T[49]);
+          return;
+        }
+      }
+    }
     const lines = (v.lines ?? []).map((row) => ({
       articleId: row.articleId,
       qty: Number(row.qty),
@@ -291,8 +377,10 @@ export default function StockMovements() {
         lines,
         reason: v.reason,
         refDoc: v.refDoc,
-        supplierName: v.moveType === "IN" ? v.supplierName?.trim() || undefined : undefined,
-        clientName: v.moveType === "OUT" ? v.clientName?.trim() || undefined : undefined,
+        supplierName: mt === "IN" ? v.supplierName?.trim() || undefined : undefined,
+        clientName: mt === "OUT" ? v.clientName?.trim() || undefined : undefined,
+        warehouseFromId: mt === "XFER" ? v.warehouseFromId : undefined,
+        warehouseToId: mt === "XFER" ? v.warehouseToId : undefined,
       });
       if (!r.success) return;
       const mid = r.movementId;
@@ -317,9 +405,7 @@ export default function StockMovements() {
     }
   };
 
-  const onPickCreateReceipts = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const picked = Array.from(e.target.files ?? []);
-    e.target.value = "";
+  const onAddCreateReceipts = (picked: File[]) => {
     if (picked.length === 0) return;
     setReceiptFiles((prev) => {
       const merged = [...prev, ...picked].slice(0, 3);
@@ -389,7 +475,7 @@ export default function StockMovements() {
       key: "moveType",
       width: 140,
       render: (v: string) => (
-        <Text strong style={{ color: v === "IN" ? "#52c41a" : v === "OUT" ? "#ff4d4f" : "#1677ff" }}>
+        <Text strong style={{ color: moveTypeColor(v) }}>
           {typeLabel(v)}
         </Text>
       ),
@@ -557,6 +643,8 @@ export default function StockMovements() {
                   refDoc: m.refDoc || "",
                   supplierName: m.supplierName,
                   clientName: m.clientName,
+                  warehouseFromId: m.warehouseFromId || undefined,
+                  warehouseToId: m.warehouseToId || undefined,
                   lines: batchLines.map((l) => ({
                     articleId: l.articleId,
                     qty: l.qty,
@@ -579,7 +667,18 @@ export default function StockMovements() {
               {detailMovement.createdAt ? dayjs(detailMovement.createdAt).format("DD/MM/YYYY HH:mm") : "—"}
             </Descriptions.Item>
             <Descriptions.Item label={T[3]}>{typeLabel(detailMovement.moveType)}</Descriptions.Item>
-            <Descriptions.Item label={tiersTitle}>{tiersCell(detailMovement) || "—"}</Descriptions.Item>
+            {detailMovement.moveType?.toUpperCase() === "XFER" ? (
+              <>
+                <Descriptions.Item label={T[41]}>
+                  {detailMovement.warehouseFromName || detailMovement.warehouseFromId || "—"}
+                </Descriptions.Item>
+                <Descriptions.Item label={T[42]}>
+                  {detailMovement.warehouseToName || detailMovement.warehouseToId || "—"}
+                </Descriptions.Item>
+              </>
+            ) : (
+              <Descriptions.Item label={tiersTitle}>{tiersCell(detailMovement) || "—"}</Descriptions.Item>
+            )}
             <Descriptions.Item label={T[5]}>{detailMovement.reason || "—"}</Descriptions.Item>
             <Descriptions.Item label={T[6]}>{detailMovement.refDoc || "—"}</Descriptions.Item>
             <Descriptions.Item label={T[31]}>
@@ -707,6 +806,34 @@ export default function StockMovements() {
               />
             </Form.Item>
           )}
+          {moveTypeWatch === "XFER" && (
+            <>
+              <Form.Item
+                name="warehouseFromId"
+                label={T[41]}
+                rules={[{ required: true, message: T[43] }]}
+              >
+                <Select
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder={T[43]}
+                  options={warehouses.map((w) => ({ value: w.id, label: w.name }))}
+                />
+              </Form.Item>
+              <Form.Item
+                name="warehouseToId"
+                label={T[42]}
+                rules={[{ required: true, message: T[44] }]}
+              >
+                <Select
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder={T[44]}
+                  options={warehouses.map((w) => ({ value: w.id, label: w.name }))}
+                />
+              </Form.Item>
+            </>
+          )}
           <Form.Item label={T[31]}>
             <Form.List
               name="lines"
@@ -739,10 +866,17 @@ export default function StockMovements() {
                         <Select
                           showSearch
                           optionFilterProp="label"
-                          options={articles.map((a) => ({
-                            value: a.id,
-                            label: `${a.sku} — ${a.name}`,
-                          }))}
+                          options={articles.map((a) => {
+                            const whQty = sourceWhStock[a.id];
+                            const base = `${a.sku} — ${a.name}`;
+                            return {
+                              value: a.id,
+                              label:
+                                moveTypeWatch === "XFER" && warehouseFromWatch
+                                  ? `${base} (${T[48]}: ${whQty ?? 0})`
+                                  : base,
+                            };
+                          })}
                           createRowLabel={C[2]}
                           onCreateRowClick={() => {
                             articleQuickSourceRef.current = "form";
@@ -753,13 +887,42 @@ export default function StockMovements() {
                       </Form.Item>
                       <Form.Item
                         {...restField}
-                        label={T[4]}
+                        label={
+                          moveTypeWatch === "XFER" && linesWatch?.[name]?.articleId
+                            ? `${T[4]} (${T[48]}: ${sourceWhStock[linesWatch[name].articleId] ?? 0})`
+                            : T[4]
+                        }
                         name={[name, "qty"]}
-                        rules={[{ required: true, message: T[4] }]}
-                        style={{ width: 120, marginBottom: 0 }}
+                        rules={[
+                          { required: true, message: T[4] },
+                          ...(moveTypeWatch === "XFER"
+                            ? [
+                                {
+                                  validator: async (_: unknown, val: number) => {
+                                    const aid = form.getFieldValue(["lines", name, "articleId"]) as
+                                      | string
+                                      | undefined;
+                                    if (!aid) return;
+                                    const max = sourceWhStock[aid] ?? 0;
+                                    if (Number(val) > max) {
+                                      return Promise.reject(new Error(T[49]));
+                                    }
+                                  },
+                                },
+                              ]
+                            : []),
+                        ]}
+                        style={{ width: moveTypeWatch === "XFER" ? 160 : 120, marginBottom: 0 }}
                       >
                         <InputNumber
-                          min={moveTypeWatch === "ADJ" ? 0 : 0.01}
+                          min={
+                            moveTypeWatch === "ADJ" || moveTypeWatch === "XFER" ? 0 : 0.01
+                          }
+                          max={
+                            moveTypeWatch === "XFER" && linesWatch?.[name]?.articleId
+                              ? sourceWhStock[linesWatch[name].articleId] ?? 0
+                              : undefined
+                          }
                           step={0.01}
                           style={{ width: "100%" }}
                         />
@@ -817,25 +980,18 @@ export default function StockMovements() {
           <Form.Item name="refDoc" label={T[6]}>
             <Input />
           </Form.Item>
-          <Form.Item label={T[21]} extra={T[22]}>
-            <input
-              type="file"
+          <Form.Item label={T[21]}>
+            <FileDropZone
+              dropHint={T[46]}
+              extra={T[22]}
               accept="image/png,image/jpeg"
               multiple
-              style={{ marginBottom: 8 }}
-              onChange={onPickCreateReceipts}
+              logoAlt={getPageTexts("opening")[0]}
+              files={receiptFiles}
+              removeFileLabel={T[47]}
+              onAddFiles={onAddCreateReceipts}
+              onRemoveFile={(i) => setReceiptFiles((prev) => prev.filter((_, j) => j !== i))}
             />
-            <Space wrap>
-              {receiptFiles.map((f, i) => (
-                <Tag
-                  key={`${f.name}-${i}`}
-                  closable
-                  onClose={() => setReceiptFiles((prev) => prev.filter((_, j) => j !== i))}
-                >
-                  {f.name}
-                </Tag>
-              ))}
-            </Space>
           </Form.Item>
         </Form>
       </Modal>

@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Checkbox, Space, Typography, message } from "antd";
 import { PrinterOutlined } from "@ant-design/icons";
-import { Button, Loading, Modal } from "../../../items";
+import { Button, Loading, Modal, Panel } from "../../../items";
 import { usePageTexts } from "../../../hooks/usePageTexts";
 import { useSession } from "../../context/SessionContext";
-import { completeStockCollabTask, fetchStockCircuit } from "../../../lib/stockApi";
+import {
+  completeStockCollabTask,
+  fetchCircuitValidatedSteps,
+  fetchStockCircuit,
+  type StockCircuitValidatedStep,
+} from "../../../lib/stockApi";
 import { dispatchCollabTasksChanged, type ScheduledTask } from "../../utils/scheduledTasksStore";
 import { parseCircuitFieldsJson, formFieldName } from "../../utils/circuitFormFields";
 import {
@@ -33,8 +38,10 @@ export function CircuitTaskFormModal({ open, task, onClose, onCompleted }: Props
   const [values, setValues] = useState<Record<string, string>>({});
   const [entityOptions, setEntityOptions] = useState<CircuitFormEntityOptions>({});
   const [approved, setApproved] = useState(false);
+  const [validatedSteps, setValidatedSteps] = useState<StockCircuitValidatedStep[]>([]);
 
   const isValidate = task?.kind === "circuit_validate";
+  const isCircuitTask = task?.kind === "circuit_validate" || task?.kind === "circuit_fill";
 
   const reset = useCallback(() => {
     setStepTitle("");
@@ -42,6 +49,7 @@ export function CircuitTaskFormModal({ open, task, onClose, onCompleted }: Props
     setFieldsJson("[]");
     setValues({});
     setApproved(false);
+    setValidatedSteps([]);
   }, []);
 
   useEffect(() => {
@@ -52,14 +60,20 @@ export function CircuitTaskFormModal({ open, task, onClose, onCompleted }: Props
     setLoading(true);
     void (async () => {
       try {
-        const [{ circuit, steps }, entities] = await Promise.all([
+        const stepIdx = task.circuitStepIndex ?? 0;
+        const [{ circuit, steps }, entities, prior] = await Promise.all([
           fetchStockCircuit(task.circuitId!),
           loadCircuitFormEntityOptions(),
+          isCircuitTask
+            ? fetchCircuitValidatedSteps({
+                circuitId: task.circuitId!,
+                beforeStepIndex: stepIdx,
+              })
+            : Promise.resolve([] as StockCircuitValidatedStep[]),
         ]);
         setCircuitName(circuit.name ?? "");
-        const idx = task.circuitStepIndex ?? 0;
         const ordered = [...steps].sort((a, b) => a.position - b.position);
-        const st = ordered[idx];
+        const st = ordered[stepIdx];
         if (!st) {
           message.error("Étape introuvable.");
           reset();
@@ -68,8 +82,14 @@ export function CircuitTaskFormModal({ open, task, onClose, onCompleted }: Props
         }
         setStepTitle(st.title ?? "");
         setFieldsJson(st.fieldsJson ?? "[]");
-        setValues({});
+        const incoming = task.formValues ?? {};
+        setValues(
+          Object.fromEntries(
+            Object.entries(incoming).map(([k, v]) => [k, v == null ? "" : String(v)]),
+          ),
+        );
         setEntityOptions(entities);
+        setValidatedSteps(prior);
       } catch (e) {
         message.error(String(e));
         onClose();
@@ -77,7 +97,7 @@ export function CircuitTaskFormModal({ open, task, onClose, onCompleted }: Props
         setLoading(false);
       }
     })();
-  }, [open, task, reset, onClose]);
+  }, [open, task, reset, onClose, isCircuitTask]);
 
   const parsedFields = useMemo(() => parseCircuitFieldsJson(fieldsJson), [fieldsJson]);
 
@@ -123,6 +143,7 @@ export function CircuitTaskFormModal({ open, task, onClose, onCompleted }: Props
         id: task.id,
         requesterUserId: session.id,
         requesterRole: session.role ?? "",
+        formValues: isValidate ? task.formValues ?? values : values,
       });
       message.success(T[8]);
       dispatchCollabTasksChanged();
@@ -157,6 +178,82 @@ export function CircuitTaskFormModal({ open, task, onClose, onCompleted }: Props
           {circuitName}
           {stepTitle ? ` — ${stepTitle}` : ""}
         </Typography.Paragraph>
+        {isCircuitTask ? (
+          <div style={{ marginBottom: 16 }}>
+            <Typography.Text strong style={{ display: "block", marginBottom: 8 }}>
+              {T[9]}
+            </Typography.Text>
+            {validatedSteps.length === 0 ? (
+              <Typography.Text type="secondary">{T[10]}</Typography.Text>
+            ) : (
+              <Space direction="vertical" size="small" style={{ width: "100%" }}>
+                {validatedSteps.map((vs) => {
+                  const fields = parseCircuitFieldsJson(vs.fieldsJson ?? "[]");
+                  const fv = vs.formValues ?? {};
+                  const formatAt = (raw?: string) => {
+                    const s = (raw ?? "").trim();
+                    if (!s) return "—";
+                    const d = new Date(s.includes("T") ? s : s.replace(" ", "T"));
+                    return Number.isNaN(d.getTime()) ? s : d.toLocaleString("fr-FR");
+                  };
+                  const panelTitle = `${T[11]} ${(vs.stepIndex ?? 0) + 1}${
+                    vs.stepTitle ? ` — ${vs.stepTitle}` : ""
+                  }`;
+                  return (
+                    <Panel
+                      key={`validated-${vs.stepIndex}`}
+                      size="small"
+                      collapsible
+                      defaultCollapsed
+                      title={panelTitle}
+                    >
+                      <Typography.Paragraph style={{ marginBottom: 4 }}>
+                        <Typography.Text type="secondary">{T[12]}{" : "}</Typography.Text>
+                        <Typography.Text>{vs.filledBy?.trim() || "—"}</Typography.Text>
+                      </Typography.Paragraph>
+                      <Typography.Paragraph style={{ marginBottom: 4 }}>
+                        <Typography.Text type="secondary">{T[13]}{" : "}</Typography.Text>
+                        <Typography.Text>{formatAt(vs.filledAt)}</Typography.Text>
+                      </Typography.Paragraph>
+                      <Typography.Paragraph style={{ marginBottom: 4 }}>
+                        <Typography.Text type="secondary">{T[15]}{" : "}</Typography.Text>
+                        <Typography.Text>{vs.signedBy?.trim() || "—"}</Typography.Text>
+                      </Typography.Paragraph>
+                      <Typography.Paragraph style={{ marginBottom: 12 }}>
+                        <Typography.Text type="secondary">{T[14]}{" : "}</Typography.Text>
+                        <Typography.Text>{formatAt(vs.signedAt)}</Typography.Text>
+                      </Typography.Paragraph>
+                      {fields.length === 0 ? (
+                        <Typography.Text type="secondary">—</Typography.Text>
+                      ) : (
+                        fields.map((f) => {
+                          const n = formFieldName(f);
+                          const raw = fv[n] ?? "";
+                          const display =
+                            isCircuitEntityFieldType(f.type) && raw
+                              ? resolveEntityFieldDisplayValue(f.type, raw, entityOptions)
+                              : raw;
+                          return (
+                            <Typography.Paragraph
+                              key={`${vs.stepIndex}-${n}`}
+                              style={{ marginBottom: 4 }}
+                            >
+                              <Typography.Text type="secondary">
+                                {f.label.trim() || n}
+                                {" : "}
+                              </Typography.Text>
+                              <Typography.Text>{display || "—"}</Typography.Text>
+                            </Typography.Paragraph>
+                          );
+                        })
+                      )}
+                    </Panel>
+                  );
+                })}
+              </Space>
+            )}
+          </div>
+        ) : null}
         <CircuitDynamicForm
           fields={parsedFields}
           value={values}

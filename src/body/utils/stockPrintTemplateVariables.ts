@@ -33,6 +33,94 @@ export const STOCK_PRINT_TEMPLATE_VARIABLES: StockPrintTemplateVariable[] = [
   { key: "document.type", label: "Document reçu — type (png/jpeg/pdf)", category: "Document" },
 ];
 
+/** Clés de variables disponibles selon l’écran d’impression des listes. */
+export const SCREEN_PRINT_VARIABLE_KEYS: Record<string, string[]> = {
+  movements: [
+    "titre",
+    "sousTitre",
+    "date.aujourdhui",
+    "date.heure",
+    "liste.contenu",
+    "article.nom",
+    "article.sku",
+    "mouvement.type",
+    "mouvement.qte",
+    "mouvement.motif",
+    "mouvement.refDoc",
+    "mouvement.date",
+    "fournisseur.nom",
+    "client.nom",
+  ],
+  articles: [
+    "titre",
+    "sousTitre",
+    "date.aujourdhui",
+    "date.heure",
+    "liste.contenu",
+    "article.nom",
+    "article.sku",
+    "article.qte",
+    "article.unite",
+    "article.categorie",
+  ],
+  docs: [
+    "titre",
+    "sousTitre",
+    "date.aujourdhui",
+    "date.heure",
+    "liste.contenu",
+    "document.nom",
+    "document.type",
+  ],
+  parties: [
+    "titre",
+    "sousTitre",
+    "date.aujourdhui",
+    "date.heure",
+    "liste.contenu",
+    "fournisseur.nom",
+    "client.nom",
+  ],
+  ref: ["titre", "sousTitre", "date.aujourdhui", "date.heure", "liste.contenu"],
+  wh: ["titre", "sousTitre", "date.aujourdhui", "date.heure", "liste.contenu"],
+  dashboard_recent: [
+    "titre",
+    "sousTitre",
+    "date.aujourdhui",
+    "date.heure",
+    "liste.contenu",
+    "mouvement.type",
+    "mouvement.qte",
+    "mouvement.date",
+  ],
+  dashboard_categories: ["titre", "sousTitre", "date.aujourdhui", "date.heure", "liste.contenu"],
+};
+
+const GENERAL_PRINT_KEYS = [
+  "titre",
+  "sousTitre",
+  "date.aujourdhui",
+  "date.heure",
+  "liste.contenu",
+  "societe.nom",
+  "societe.adresse",
+] as const;
+
+/** Clés pour un écran ; `null` si aucun écran → catalogue complet. */
+export function getPrintVariableKeysForScreen(screenKey?: string | null): string[] | null {
+  const k = (screenKey ?? "").trim();
+  if (!k) return null;
+  return SCREEN_PRINT_VARIABLE_KEYS[k] ?? [...GENERAL_PRINT_KEYS];
+}
+
+/** Variables du catalogue filtrées selon l’écran (toutes si écran vide). */
+export function getPrintVariablesForScreen(screenKey?: string | null): StockPrintTemplateVariable[] {
+  const keys = getPrintVariableKeysForScreen(screenKey);
+  if (!keys) return [...STOCK_PRINT_TEMPLATE_VARIABLES];
+  const byKey = new Map(STOCK_PRINT_TEMPLATE_VARIABLES.map((v) => [v.key, v]));
+  return keys.map((key) => byKey.get(key) ?? { key, label: key });
+}
+
 export function extractPlaceholderKeys(html: string, css: string): string[] {
   const set = new Set<string>();
   const re = /\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g;

@@ -4,7 +4,7 @@
   dbap.db              — catalogue (tab_pays, tab_env, …) ; anciennement dbla.db
   dbapyellow.db …      — bases « couleur » ; anciennement dbla*.db
   dbapadmin.db         — admin / tab_config ; anciennement dblaadmin.db
-  dbap_stock.db        — module stock : stock_article, stock_movement (+ supplier_name, client_name), stock_party (fournisseurs/clients pour listes)
+  dbap_stock.db        — module stock : stock_article, stock_article_warehouse (qty par emplacement), stock_movement (IN/OUT/ADJ/XFER + warehouse_from/to), stock_party, stock_ref_warehouse, stock_ref_unit (+ unit_type TEXT: float|numeric|alphanumeric)
 
 [Frontend]
   index.html #opening-splash : logo opening-logo.png + titre (pages.opening[0]) ; hide sur loggappro-ready ou timeout
@@ -15,7 +15,10 @@
       StockLayout (Sider + Outlet)
         /stock -> StockDashboard  : stock_dashboard_stats, stock_list_*
         /stock/articles         : stock_list_articles, stock_upsert_article, stock_delete_article
-        /stock/movements        : stock_list_movements, stock_add_movement
+        /stock/movements        : stock_list_movements, stock_add_movement (IN/OUT/ADJ + XFER emplacement A→B)
+        /stock/circuits/fill    : Remplir un circuit (tâches circuit_fill + CircuitTaskFormModal)
+                                  CircuitTaskFormModal : Panel rétractable « infos déjà validées »
+                                  (stock_list_circuit_validated_steps) sur circuit_fill / circuit_validate
       StockDbSettingsModal     : stock_test_remote_db
   AntdThemeBridge : ConfigProvider + theme <- themes[themeNumber]
   ThemeCssSync     : CSS variables --primary, --secondary, ... sur <html>

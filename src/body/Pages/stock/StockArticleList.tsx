@@ -40,7 +40,16 @@ export default function StockArticleList() {
   const F = usePageTexts("stockArticleForm");
   const N = usePageTexts("stockArticlesNav");
   const C = usePageTexts("stockSelectCreateRow");
-  const unitRequiredMsg = getPageTexts("stockArticleUnits")[11];
+  const U = usePageTexts("stockArticleUnits");
+  const unitRequiredMsg = U[11];
+  const unitTypeOptions = useMemo(
+    () => [
+      { value: "float", label: U[15] },
+      { value: "numeric", label: U[16] },
+      { value: "alphanumeric", label: U[17] },
+    ],
+    [U],
+  );
   const catSavedMsg = getPageTexts("stockArticleCategories")[10];
   const curSavedMsg = getPageTexts("stockSelectCreateRow")[27];
   const [rows, setRows] = useState<StockArticle[]>([]);
@@ -50,7 +59,9 @@ export default function StockArticleList() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<StockArticle | null>(null);
   const [form] = Form.useForm<Partial<StockArticle>>();
-  const [unitOptions, setUnitOptions] = useState<{ value: string; label: string }[]>([]);
+  const [unitOptions, setUnitOptions] = useState<
+    { value: string; label: string; unitType?: string }[]
+  >([]);
   const [locationOptions, setLocationOptions] = useState<{ value: string; label: string }[]>([]);
   const [defaultWarehouseId, setDefaultWarehouseId] = useState("");
   const [categoryOptions, setCategoryOptions] = useState<{ value: string; label: string }[]>([]);
@@ -60,7 +71,7 @@ export default function StockArticleList() {
   const [categoryQuickOpen, setCategoryQuickOpen] = useState(false);
   const [currencyQuickOpen, setCurrencyQuickOpen] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
-  const [unitQuickForm] = Form.useForm<{ name: string; code?: string }>();
+  const [unitQuickForm] = Form.useForm<{ name: string; code?: string; unitType?: string }>();
   const [locationQuickForm] = Form.useForm<{ name: string; code?: string }>();
   const [categoryQuickForm] = Form.useForm<{ name: string; code?: string }>();
   const [currencyQuickForm] = Form.useForm<{ name: string; code?: string }>();
@@ -79,6 +90,13 @@ export default function StockArticleList() {
     return [...categoryOptions, { value: cat, label: cat }];
   }, [categoryOptions, editing?.category]);
 
+  const mergedUnitOptions = useMemo(() => {
+    const u = editing?.unit?.trim();
+    if (!u) return unitOptions;
+    if (unitOptions.some((o) => o.value === u)) return unitOptions;
+    return [...unitOptions, { value: u, label: u }];
+  }, [unitOptions, editing?.unit]);
+
   const mergedLocationOptions = useMemo(() => {
     const loc = editing?.location?.trim();
     if (!loc) return locationOptions;
@@ -93,6 +111,39 @@ export default function StockArticleList() {
     return [...currencyOptions, { value: c, label: c }];
   }, [currencyOptions, editing?.currency]);
 
+  const watchedUnit = Form.useWatch("unit", form);
+  const activeUnitType = useMemo(() => {
+    const name = String(watchedUnit ?? editing?.unit ?? "").trim();
+    const hit = unitOptions.find((o) => o.value === name);
+    return (hit?.unitType ?? "alphanumeric").toLowerCase();
+  }, [watchedUnit, editing?.unit, unitOptions]);
+
+  const qtyFieldProps = useMemo(() => {
+    if (activeUnitType === "numeric") {
+      return {
+        min: 0,
+        step: 1,
+        precision: 0 as number | undefined,
+        style: { width: "100%" as const },
+      };
+    }
+    if (activeUnitType === "float") {
+      return {
+        min: 0,
+        step: 0.01,
+        precision: undefined as number | undefined,
+        style: { width: "100%" as const },
+      };
+    }
+    // alphanumeric : quantités souples (décimales autorisées)
+    return {
+      min: 0,
+      step: 0.01,
+      precision: undefined as number | undefined,
+      style: { width: "100%" as const },
+    };
+  }, [activeUnitType]);
+
   const locationLabelByValue = useMemo(() => {
     const m: Record<string, string> = {};
     for (const o of locationOptions) m[o.value] = o.label;
@@ -101,7 +152,13 @@ export default function StockArticleList() {
 
   const loadRefs = useCallback(() => {
     fetchRefItems("unit").then((list) =>
-      setUnitOptions(list.map((x) => ({ value: x.name, label: x.code ? `${x.name} (${x.code})` : x.name }))),
+      setUnitOptions(
+        list.map((x) => ({
+          value: x.name,
+          label: x.code ? `${x.name} (${x.code})` : x.name,
+          unitType: x.unitType ?? "alphanumeric",
+        })),
+      ),
     );
     if (canLocCreate) {
       fetchRefItems("warehouse").then((list) => {
@@ -211,13 +268,17 @@ export default function StockArticleList() {
       return;
     }
     try {
+      const asQty = (n: unknown) => {
+        const x = Number(n ?? 0);
+        return activeUnitType === "numeric" ? Math.round(x) : x;
+      };
       await saveArticle({
         ...v,
         id: editing?.id,
         sku: v.sku!.trim(),
         name: v.name!.trim(),
-        qty: Number(v.qty ?? 0),
-        minQty: Number(v.minQty ?? 0),
+        qty: asQty(v.qty),
+        minQty: asQty(v.minQty),
         price: Number(v.price ?? 0),
         currency: (v.currency as string | undefined)?.trim() ?? "",
       });
@@ -233,7 +294,11 @@ export default function StockArticleList() {
     const v = await unitQuickForm.validateFields().catch(() => null);
     if (!v?.name?.trim()) return;
     try {
-      await upsertRefItem("unit", { name: v.name.trim(), code: v.code?.trim() || "" });
+      await upsertRefItem("unit", {
+        name: v.name.trim(),
+        code: v.code?.trim() || "",
+        unitType: v.unitType ?? "alphanumeric",
+      });
       message.success(C[15]);
       await loadRefs();
       form.setFieldValue("unit", v.name.trim());
@@ -542,12 +607,24 @@ export default function StockArticleList() {
               showSearch
               allowClear
               optionFilterProp="label"
-              options={unitOptions}
+              options={mergedUnitOptions}
               placeholder={F[3]}
               createRowLabel={C[0]}
               onCreateRowClick={() => {
                 unitQuickForm.resetFields();
+                unitQuickForm.setFieldsValue({ unitType: "alphanumeric" });
                 setUnitQuickOpen(true);
+              }}
+              onChange={(v) => {
+                const t = unitOptions.find((o) => o.value === v)?.unitType ?? "alphanumeric";
+                if (t === "numeric") {
+                  const qty = form.getFieldValue("qty");
+                  const minQty = form.getFieldValue("minQty");
+                  form.setFieldsValue({
+                    qty: qty == null || qty === "" ? qty : Math.round(Number(qty)),
+                    minQty: minQty == null || minQty === "" ? minQty : Math.round(Number(minQty)),
+                  });
+                }
               }}
               dropdownRender={(menu) => (
                 <>
@@ -560,10 +637,10 @@ export default function StockArticleList() {
             />
           </Form.Item>
           <Form.Item name="qty" label={T[20] ?? F[4]}>
-            <InputNumber min={0} step={0.01} style={{ width: "100%" }} />
+            <InputNumber {...qtyFieldProps} />
           </Form.Item>
           <Form.Item name="minQty" label={F[5]}>
-            <InputNumber min={0} step={0.01} style={{ width: "100%" }} />
+            <InputNumber {...qtyFieldProps} />
           </Form.Item>
           <Form.Item name="price" label={F[8]}>
             <InputNumber min={0} step={0.01} style={{ width: "100%" }} />
@@ -634,12 +711,15 @@ export default function StockArticleList() {
         destroyOnHidden
         width={440}
       >
-        <Form form={unitQuickForm} layout="vertical">
+        <Form form={unitQuickForm} layout="vertical" initialValues={{ unitType: "alphanumeric" }}>
           <Form.Item name="name" label={C[10]} rules={[{ required: true, message: unitRequiredMsg }]}>
             <Input />
           </Form.Item>
           <Form.Item name="code" label={C[11]}>
             <Input />
+          </Form.Item>
+          <Form.Item name="unitType" label={U[14]} rules={[{ required: true, message: U[14] }]}>
+            <Select options={unitTypeOptions} />
           </Form.Item>
         </Form>
       </Modal>

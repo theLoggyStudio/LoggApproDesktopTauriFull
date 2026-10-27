@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Card, Col, Form, Input, Row, Select, Space, Typography, message } from "antd";
+import { Card, Col, Form, Input, Row, Space, Typography, message } from "antd";
 import { CopyOutlined } from "@ant-design/icons";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Button, Loading } from "../../../items";
+import { Button, Loading, Select } from "../../../items";
 import { getPageTexts, usePageTexts } from "../../../hooks/usePageTexts";
-import { useSession, type SessionUser } from "../../context/SessionContext";
+import { useSession } from "../../context/SessionContext";
 import {
   fetchStockDocumentPrintModel,
   upsertStockDocumentPrintModel,
@@ -12,8 +12,9 @@ import {
 } from "../../../lib/stockApi";
 import { canViewDocumentPrintModels, canEditDocumentPrintModels } from "../../utils/stockPrivileges";
 import {
-  STOCK_PRINT_TEMPLATE_VARIABLES,
   extractPlaceholderKeys,
+  getPrintVariableKeysForScreen,
+  getPrintVariablesForScreen,
   substituteMustache,
   type StockPrintTemplateVariable,
 } from "../../utils/stockPrintTemplateVariables";
@@ -59,32 +60,6 @@ function demoValueForKey(key: string): string {
   return map[key] ?? `(${key})`;
 }
 
-const SCREEN_PRESET_KEYS: Record<string, string[]> = {
-  movements: [
-    "titre",
-    "sousTitre",
-    "date.aujourdhui",
-    "date.heure",
-    "liste.contenu",
-    "article.nom",
-    "article.sku",
-    "mouvement.type",
-    "mouvement.qte",
-    "mouvement.motif",
-    "mouvement.refDoc",
-    "mouvement.date",
-    "fournisseur.nom",
-    "client.nom",
-  ],
-  articles: ["titre", "sousTitre", "date.aujourdhui", "date.heure", "liste.contenu", "article.nom", "article.sku", "article.qte", "article.unite", "article.categorie"],
-  docs: ["titre", "sousTitre", "date.aujourdhui", "date.heure", "liste.contenu", "document.nom", "document.type"],
-  parties: ["titre", "sousTitre", "date.aujourdhui", "date.heure", "liste.contenu", "fournisseur.nom", "client.nom"],
-  ref: ["titre", "sousTitre", "date.aujourdhui", "date.heure", "liste.contenu"],
-  wh: ["titre", "sousTitre", "date.aujourdhui", "date.heure", "liste.contenu"],
-  dashboard_recent: ["titre", "sousTitre", "date.aujourdhui", "date.heure", "liste.contenu", "mouvement.type", "mouvement.qte", "mouvement.date"],
-  dashboard_categories: ["titre", "sousTitre", "date.aujourdhui", "date.heure", "liste.contenu"],
-};
-
 export default function StockDocumentPrintModelEditor() {
   const T = usePageTexts("stockDocumentPrintModels");
   const { modelId } = useParams<{ modelId: string }>();
@@ -113,15 +88,21 @@ export default function StockDocumentPrintModelEditor() {
     [T],
   );
 
+  /** Variables liées à l’écran (trigger Select → catalogue HTML/CSS). */
+  const screenVariables = useMemo(
+    () => getPrintVariablesForScreen(assignedScreen),
+    [assignedScreen],
+  );
+
   const extraVars: StockPrintTemplateVariable[] = useMemo(() => {
     const keys = extractPlaceholderKeys(html, css);
-    const known = new Set(STOCK_PRINT_TEMPLATE_VARIABLES.map((v) => v.key));
+    const known = new Set(screenVariables.map((v) => v.key));
     return keys.filter((k) => !known.has(k)).map((k) => ({ key: k, label: k, category: "Modèle" }));
-  }, [html, css]);
+  }, [html, css, screenVariables]);
 
   const placeholderKeys = useMemo(() => {
     const extracted = extractPlaceholderKeys(html, css);
-    const preset = SCREEN_PRESET_KEYS[assignedScreen] ?? [];
+    const preset = getPrintVariableKeysForScreen(assignedScreen) ?? [];
     return [...new Set([...preset, ...extracted])];
   }, [html, css, assignedScreen]);
 
@@ -234,7 +215,7 @@ export default function StockDocumentPrintModelEditor() {
     }
     setSaving(true);
     try {
-      const res = await upsertStockDocumentPrintModel({
+      await upsertStockDocumentPrintModel({
         id: isNew ? undefined : modelId,
         name: n,
         description: description.trim(),
@@ -254,10 +235,19 @@ export default function StockDocumentPrintModelEditor() {
   if (!canView) {
     return (
       <Card>
-        <Text type="secondary">Accès refusé.</Text>
+        <Text type="secondary">{T[31]}</Text>
       </Card>
     );
   }
+
+  const screenSelectTriggers = useMemo(
+    () => [
+      (value: unknown) => {
+        setAssignedScreen(typeof value === "string" ? value : "");
+      },
+    ],
+    [],
+  );
 
   return (
     <Loading spinning={loading}>
@@ -304,7 +294,7 @@ export default function StockDocumentPrintModelEditor() {
                       allowClear
                       placeholder={T[19]}
                       value={assignedScreen || undefined}
-                      onChange={(v) => setAssignedScreen(typeof v === "string" ? v : "")}
+                      triggers={screenSelectTriggers}
                       options={DOCUMENT_PRINT_SCREEN_KEYS.map((key, i) => ({
                         value: key,
                         label: T[20 + i] ?? key,
@@ -317,10 +307,30 @@ export default function StockDocumentPrintModelEditor() {
               </Form>
             </Card>
             <Card title={T[6]} size="small" style={{ marginTop: 16 }}>
-              <MustacheVariableTextarea value={html} onChange={setHtml} rows={14} extraVariables={extraVars} disabled={!canEdit} />
+              <MustacheVariableTextarea
+                value={html}
+                onChange={setHtml}
+                rows={14}
+                variables={screenVariables}
+                extraVariables={extraVars}
+                showCatalog={Boolean(assignedScreen)}
+                catalogTitle={T[28]}
+                emptyText={T[29]}
+                disabled={!canEdit}
+              />
             </Card>
             <Card title={T[7]} size="small" style={{ marginTop: 16 }}>
-              <MustacheVariableTextarea value={css} onChange={setCss} rows={10} extraVariables={extraVars} disabled={!canEdit} />
+              <MustacheVariableTextarea
+                value={css}
+                onChange={setCss}
+                rows={10}
+                variables={screenVariables}
+                extraVariables={extraVars}
+                showCatalog={Boolean(assignedScreen)}
+                catalogTitle={T[28]}
+                emptyText={T[29]}
+                disabled={!canEdit}
+              />
             </Card>
           </Col>
           <Col xs={24} lg={12}>
@@ -329,7 +339,7 @@ export default function StockDocumentPrintModelEditor() {
             </Card>
             <Card title={T[9]} size="small" style={{ marginTop: 16 }}>
               {placeholderKeys.length === 0 ? (
-                <Text type="secondary">Ajoutez des variables au format {"{{ nom }}"} dans le HTML ou le CSS.</Text>
+                <Text type="secondary">{T[30]}</Text>
               ) : (
                 <Form layout="vertical">
                   {placeholderKeys.map((k) => (

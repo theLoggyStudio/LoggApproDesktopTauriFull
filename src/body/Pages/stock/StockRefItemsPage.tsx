@@ -34,7 +34,7 @@ type PageKey =
 type Props = {
   kind: Exclude<StockRefKind, "warehouse">;
   pageKey: PageKey;
-  /** Filtrage / création des emplacements pour un entrepôt (écran Entrepôt). */
+  /** Filtrage / création des emplacements pour un emplacement (écran Emplacement). */
   warehouseId?: string;
   /** `inline` : formulaire au-dessus du tableau (création / édition / suppression comme avant). */
   formVariant?: "modal" | "inline";
@@ -45,6 +45,8 @@ type FormVals = {
   code: string;
   housingFee?: number;
   paymentPeriod?: string;
+  /** Unités : toujours string (`float` | `numeric` | `alphanumeric`). */
+  unitType?: string;
 };
 
 export function StockRefItemsPage({ kind, pageKey, warehouseId, formVariant = "modal" }: Props) {
@@ -54,6 +56,7 @@ export function StockRefItemsPage({ kind, pageKey, warehouseId, formVariant = "m
   const { session } = useSession();
   const isInline = formVariant === "inline";
   const isLoc = kind === "location";
+  const isUnit = kind === "unit";
   const canLocView = !isLoc || hasRefLocationView(session);
   const canLocCreate = !isLoc || hasRefLocationCreate(session);
   const canLocEdit = !isLoc || hasRefLocationEdit(session);
@@ -69,12 +72,31 @@ export function StockRefItemsPage({ kind, pageKey, warehouseId, formVariant = "m
   }, [kind, session]);
 
   const printListLabel = useMemo(() => {
-    if (pageKey === "stockArticleUnits") return T[12];
+    if (pageKey === "stockArticleUnits") return T[13];
     if (pageKey === "stockArticleCategories") return T[13];
     if (pageKey === "stockArticleCurrencies") return T[13];
     if (pageKey === "stockArticleLocations") return T[24];
     return T[0];
   }, [pageKey, T]);
+
+  const unitTypeOptions = useMemo(
+    () => [
+      { value: "float", label: T[15] },
+      { value: "numeric", label: T[16] },
+      { value: "alphanumeric", label: T[17] },
+    ],
+    [T],
+  );
+
+  const unitTypeLabel = useCallback(
+    (v?: string) => {
+      const t = (v ?? "alphanumeric").trim().toLowerCase();
+      if (t === "float") return T[15];
+      if (t === "numeric") return T[16];
+      return T[17];
+    },
+    [T],
+  );
 
   const [rows, setRows] = useState<StockRefItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,6 +124,7 @@ export function StockRefItemsPage({ kind, pageKey, warehouseId, formVariant = "m
       code: row.code ?? "",
       housingFee: Number(row.housingFee ?? 0),
       paymentPeriod: row.paymentPeriod ?? "",
+      unitType: row.unitType ?? "alphanumeric",
     });
   };
 
@@ -115,11 +138,12 @@ export function StockRefItemsPage({ kind, pageKey, warehouseId, formVariant = "m
         if (editingId) {
           const row = rows.find((x) => x.id === editingId);
           if (row) {
-            if (isLoc) setFormFromRow(row);
+            if (isLoc || isUnit) setFormFromRow(row);
             else form.setFieldsValue({ name: row.name, code: row.code ?? "" });
           }
         } else {
           form.resetFields();
+          if (isUnit) form.setFieldsValue({ unitType: "alphanumeric" });
         }
       }, 0);
       return () => window.clearTimeout(timer);
@@ -129,16 +153,17 @@ export function StockRefItemsPage({ kind, pageKey, warehouseId, formVariant = "m
       if (editingId) {
         const row = rows.find((x) => x.id === editingId);
         if (row) {
-          if (isLoc) setFormFromRow(row);
+          if (isLoc || isUnit) setFormFromRow(row);
           else form.setFieldsValue({ name: row.name, code: row.code ?? "" });
         }
       } else {
         form.resetFields();
         if (isLoc) form.setFieldsValue({ housingFee: 0, paymentPeriod: "" });
+        if (isUnit) form.setFieldsValue({ unitType: "alphanumeric" });
       }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [isInline, modalOpen, editingId, rows, form, isLoc]);
+  }, [isInline, modalOpen, editingId, rows, form, isLoc, isUnit]);
 
   const openCreate = () => {
     if (isLoc && !canLocCreate) return;
@@ -146,6 +171,7 @@ export function StockRefItemsPage({ kind, pageKey, warehouseId, formVariant = "m
     if (isInline) {
       form.resetFields();
       if (isLoc) form.setFieldsValue({ housingFee: 0, paymentPeriod: "" });
+      if (isUnit) form.setFieldsValue({ unitType: "alphanumeric" });
     } else {
       setModalOpen(true);
     }
@@ -165,6 +191,7 @@ export function StockRefItemsPage({ kind, pageKey, warehouseId, formVariant = "m
       ...v,
       name: nm ? `${nm}${sfx}` : nm,
       code: (v.code ?? "").trim(),
+      unitType: v.unitType ?? "alphanumeric",
     });
     setEditingId(null);
   };
@@ -191,6 +218,9 @@ export function StockRefItemsPage({ kind, pageKey, warehouseId, formVariant = "m
       if (isLoc) {
         body.housingFee = Number(v.housingFee ?? 0);
         body.paymentPeriod = v.paymentPeriod ?? "";
+      }
+      if (isUnit) {
+        body.unitType = String(v.unitType ?? "alphanumeric");
       }
       await upsertRefItem(kind, body);
       message.success(T[10]);
@@ -292,8 +322,17 @@ export function StockRefItemsPage({ kind, pageKey, warehouseId, formVariant = "m
         },
       );
     }
+    if (isUnit) {
+      base.push({
+        title: T[14],
+        dataIndex: "unitType",
+        key: "unitType",
+        width: 140,
+        render: (v: string) => unitTypeLabel(v),
+      });
+    }
     return base;
-  }, [T, W, isLoc, warehouseId]);
+  }, [T, W, isLoc, isUnit, warehouseId, unitTypeLabel]);
 
   const formInputsDisabled = isLoc && (editingId ? !canLocEdit : !canLocCreate);
 
@@ -311,6 +350,12 @@ export function StockRefItemsPage({ kind, pageKey, warehouseId, formVariant = "m
     </>
   ) : null;
 
+  const unitTypeField = isUnit ? (
+    <Form.Item name="unitType" label={T[14]} rules={[{ required: true, message: T[14] }]} initialValue="alphanumeric">
+      <Select options={unitTypeOptions} />
+    </Form.Item>
+  ) : null;
+
   const formBlock = (
     <Form form={form} layout="vertical">
       <Form.Item name="name" label={T[3]} rules={[{ required: true, message: T[11] }]}>
@@ -319,6 +364,7 @@ export function StockRefItemsPage({ kind, pageKey, warehouseId, formVariant = "m
       <Form.Item name="code" label={T[4]}>
         <Input disabled={!!formInputsDisabled} />
       </Form.Item>
+      {unitTypeField}
       {locationFeeFields}
     </Form>
   );
@@ -351,8 +397,12 @@ export function StockRefItemsPage({ kind, pageKey, warehouseId, formVariant = "m
         modelId,
       );
     }
-    const headers = [T[3], T[4], Prt[7] ?? "Date"];
-    const bodyRows = sorted.map((r) => [r.name, r.code ?? "", r.createdAt ?? ""]);
+    const headers = isUnit ? [T[3], T[4], T[14], Prt[7] ?? "Date"] : [T[3], T[4], Prt[7] ?? "Date"];
+    const bodyRows = sorted.map((r) =>
+      isUnit
+        ? [r.name, r.code ?? "", unitTypeLabel(r.unitType), r.createdAt ?? ""]
+        : [r.name, r.code ?? "", r.createdAt ?? ""],
+    );
     return await printStockListWithOptionalTemplate(
       "ref",
       `${T[0]} — ${Prt[0]}`,

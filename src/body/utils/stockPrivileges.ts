@@ -157,7 +157,7 @@ const STOCK_REF_LOCATION_GRANULAR_KEYS = [
   "ref_locations_delete",
 ] as const;
 
-/** Au moins une des clés fines emplacements est présente : on n’applique plus le mode « tout si entrepôt ». */
+/** Au moins une des clés fines emplacements est présente : on n’applique plus le mode « tout si emplacement ». */
 export function usesGranularLocationPrivileges(privileges: string[] | undefined): boolean {
   if (!privileges?.length) return false;
   return STOCK_REF_LOCATION_GRANULAR_KEYS.some((k) => privileges.includes(k));
@@ -246,6 +246,7 @@ export function pathnameToStockScreen(pathname: string): string {
   if (pathname.includes("/stock/user/roles")) return "roles";
   if (pathname.startsWith("/stock/user")) return "user";
   if (pathname.includes("/stock/circuits/forms")) return "circuits_forms";
+  if (pathname.includes("/stock/circuits/fill")) return "circuits";
   if (pathname.startsWith("/stock/circuits")) return "circuits";
   if (pathname.includes("/stock/articles/units")) return "articles_units";
   if (pathname.includes("/stock/articles/categories")) return "articles_categories";

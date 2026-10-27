@@ -26,6 +26,7 @@ import {
   dispatchCollabTasksChanged,
   getReminderTasks,
   subscribeCollabTasks,
+  subscribeOpenCollabTasks,
   subscribeScheduledTasks,
   syncLowStockTasksFromArticles,
 } from "../../utils/scheduledTasksStore";
@@ -132,6 +133,8 @@ export default function StockLayout() {
       .then(setRoleCircuitEntries)
       .catch(() => setRoleCircuitEntries([]));
   }, [session]);
+
+  useEffect(() => subscribeOpenCollabTasks(() => setTasksOpen(true)), []);
 
   useEffect(() => {
     if (!session) return;
@@ -352,6 +355,13 @@ export default function StockLayout() {
           key: "circuits-forms",
           label: CirNav[2],
           onClick: () => navigate("/stock/circuits/forms"),
+        });
+      }
+      if (canCircuitsList) {
+        children.push({
+          key: "circuits-fill",
+          label: CirNav[3],
+          onClick: () => navigate("/stock/circuits/fill"),
         });
       }
       if (canCircuitsList && dynamicCircuitChildren.length) {

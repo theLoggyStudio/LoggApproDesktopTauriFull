@@ -13,7 +13,7 @@ import { printStockListWithOptionalTemplate } from "../../utils/stockListPrintWi
 
 const { Title } = Typography;
 
-/** Zone Entrepôt : même motif que Articles / Documents — liste « Sous-écran » = entrepôts ; emplacements dans l’`<Outlet />`. */
+/** Zone Emplacement : même motif que Articles / Documents — liste « Sous-écran » = emplacements ; emplacements dans l’`<Outlet />`. */
 export default function StockWarehouseLayout() {
   const W = usePageTexts("stockWarehouseNav");
   const Prt = usePageTexts("stockPrint");

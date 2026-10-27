@@ -7,6 +7,7 @@ import {
   fetchStockDocuments,
   fetchStockRoles,
 } from "../../lib/stockApi";
+import { getPageTexts } from "../../hooks/usePageTexts";
 import { isCircuitEntityFieldType, type CircuitEntityFieldType } from "./circuitFieldTypes";
 
 export type EntitySelectOption = { value: string; label: string };
@@ -43,11 +44,13 @@ export async function loadCircuitFormEntityOptions(): Promise<CircuitFormEntityO
     fetchStockRoles().catch(() => []),
   ]);
 
+  const mt = getPageTexts("stockMovements");
   const moveTypeLbl = (t: string) => {
     const m = t.toUpperCase();
-    if (m === "IN") return "Entrée";
-    if (m === "OUT") return "Sortie";
-    if (m === "ADJ") return "Ajustement";
+    if (m === "IN") return mt[11];
+    if (m === "OUT") return mt[12];
+    if (m === "ADJ") return mt[13];
+    if (m === "XFER") return mt[40];
     return t;
   };
 

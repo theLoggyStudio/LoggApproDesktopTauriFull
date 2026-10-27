@@ -13,17 +13,21 @@ export function resolveStockSiderSelectedKeys(pathname: string): string[] {
   if (pathname.includes("/user/roles")) return ["user-roles"];
   if (pathname.includes("/user")) return ["user-profil"];
   if (pathname.includes("/circuits/forms")) return ["circuits-forms"];
-  if (pathname.endsWith("/circuits/new") || /\/circuits\/[^/]+\/edit$/.test(pathname)) {
-    return ["circuits-form"];
-  }
+  if (pathname.includes("/circuits/fill")) return ["circuits-fill"];
+  const editMatch = pathname.match(/\/circuits\/([^/]+)\/edit$/);
+  if (editMatch?.[1]) return [`circuit-role-${editMatch[1]}`];
+  if (pathname.endsWith("/circuits/new")) return ["circuits-form"];
   if (pathname.includes("/circuits")) return ["circuits-list"];
   return ["dash"];
 }
 
 /** Sous-navigation Circuits (`StockCircuitsLayout`). */
-export function resolveStockCircuitsNavActiveKey(pathname: string): "list" | "forms" | "circuit" {
+export function resolveStockCircuitsNavActiveKey(pathname: string): string {
   if (pathname.includes("/circuits/forms")) return "forms";
-  if (pathname.endsWith("/circuits/new") || /\/circuits\/[^/]+\/edit$/.test(pathname)) return "circuit";
+  if (pathname.includes("/circuits/fill")) return "fill";
+  if (pathname.endsWith("/circuits/new")) return "circuit";
+  const editMatch = pathname.match(/\/circuits\/([^/]+)\/edit$/);
+  if (editMatch?.[1]) return `role-${editMatch[1]}`;
   return "list";
 }
 

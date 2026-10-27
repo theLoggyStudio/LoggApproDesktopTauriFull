@@ -53,6 +53,7 @@ export default function StockDashboard() {
     if (u === "IN") return T[10];
     if (u === "OUT") return T[11];
     if (u === "ADJ") return T[12];
+    if (u === "XFER") return T[22];
     return t;
   };
 
@@ -216,7 +217,15 @@ export default function StockDashboard() {
               title: T[7],
               dataIndex: "moveType",
               key: "moveType",
-              render: (v: string) => <Tag color={v === "IN" ? "green" : v === "OUT" ? "red" : "blue"}>{moveLabel(v)}</Tag>,
+              render: (v: string) => (
+                <Tag
+                  color={
+                    v === "IN" ? "green" : v === "OUT" ? "red" : v === "XFER" ? "purple" : "blue"
+                  }
+                >
+                  {moveLabel(v)}
+                </Tag>
+              ),
             },
             { title: T[8], dataIndex: "qty", key: "qty" },
             {

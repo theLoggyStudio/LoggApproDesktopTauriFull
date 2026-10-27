@@ -4,7 +4,7 @@ import { Spin, Typography } from "antd";
 import { fetchRefItems } from "../../../lib/stockApi";
 import { usePageTexts } from "../../../hooks/usePageTexts";
 
-/** Redirige vers le premier entrepôt connu (la base en crée un par défaut si besoin). */
+/** Redirige vers le premier emplacement connu (la base en crée un par défaut si besoin). */
 export default function StockWarehouseRedirect() {
   const navigate = useNavigate();
   const W = usePageTexts("stockWarehouseNav");

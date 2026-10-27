@@ -21,6 +21,8 @@ export type ScheduledTask = {
   /** Tâches circuit (`circuit_fill` / `circuit_validate`). */
   circuitId?: string;
   circuitStepIndex?: number;
+  /** Valeurs du formulaire rempli (affichées en validation). */
+  formValues?: Record<string, string>;
   history?: Array<{
     action: string;
     note: string;
@@ -38,9 +40,22 @@ const CHANGED = "loggappro-scheduled-tasks";
 
 export const COLAB_TASKS_CHANGED = "loggappro-collab-tasks";
 
+const OPEN_COLLAB_TASKS = "loggappro-open-collab-tasks";
+
 /** À appeler après création / complétion d’une tâche collaborative (API). */
 export function dispatchCollabTasksChanged(): void {
   window.dispatchEvent(new CustomEvent(COLAB_TASKS_CHANGED));
+}
+
+/** Demande l’ouverture du modal des tâches collaboratives (`StockLayout`). */
+export function requestOpenCollabTasks(): void {
+  window.dispatchEvent(new CustomEvent(OPEN_COLLAB_TASKS));
+}
+
+export function subscribeOpenCollabTasks(cb: () => void): () => void {
+  const h = () => cb();
+  window.addEventListener(OPEN_COLLAB_TASKS, h);
+  return () => window.removeEventListener(OPEN_COLLAB_TASKS, h);
 }
 
 /** Date sentinelle (passée) : les rappels datés restent triés par `at` réel ; le stock bas est regroupé après. */
@@ -104,6 +119,12 @@ export function mapCollabRowToScheduledTask(row: StockCollabTaskRow): ScheduledT
     circuitStepIndex:
       typeof row.circuitStepIndex === "number" && !Number.isNaN(row.circuitStepIndex)
         ? row.circuitStepIndex
+        : undefined,
+    formValues:
+      row.formValues && typeof row.formValues === "object"
+        ? Object.fromEntries(
+            Object.entries(row.formValues).map(([k, v]) => [k, v == null ? "" : String(v)]),
+          )
         : undefined,
     history: row.history ?? [],
   };

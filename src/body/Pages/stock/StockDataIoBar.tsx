@@ -13,7 +13,7 @@ type Props = {
   importPrivilege?: string;
   /** Si absent, le bouton d’export CSV est masqué. */
   exportPrivilege?: string;
-  /** Import / export des emplacements limités à cet entrepôt (colonne `warehouseId` côté CSV). */
+  /** Import / export des emplacements limités à cet emplacement (colonne `warehouseId` côté CSV). */
   warehouseId?: string;
   onAfterImport?: () => void;
 };

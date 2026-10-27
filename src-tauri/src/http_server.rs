@@ -48,6 +48,9 @@ async fn invoke_handler(Json(req): Json<InvokeRequest>) -> impl IntoResponse {
         "test_backend_rust" => crate::commands::test_backend_rust(payload_str).await,
         "get_local_ip" => crate::commands::get_local_ip().await,
         "stock_list_articles" => crate::stock_commands::stock_list_articles(payload_str).await,
+        "stock_list_warehouse_stock" => {
+            crate::stock_commands::stock_list_warehouse_stock(payload_str).await
+        }
         "stock_upsert_article" => crate::stock_commands::stock_upsert_article(payload_str).await,
         "stock_delete_article" => crate::stock_commands::stock_delete_article(payload_str).await,
         "stock_list_movements" => crate::stock_commands::stock_list_movements(payload_str).await,
@@ -94,6 +97,9 @@ async fn invoke_handler(Json(req): Json<InvokeRequest>) -> impl IntoResponse {
         "stock_get_circuit" => crate::stock_commands::stock_get_circuit(payload_str).await,
         "stock_upsert_circuit" => crate::stock_commands::stock_upsert_circuit(payload_str).await,
         "stock_delete_circuit" => crate::stock_commands::stock_delete_circuit(payload_str).await,
+        "stock_list_circuit_validated_steps" => {
+            crate::stock_commands::stock_list_circuit_validated_steps(payload_str).await
+        },
         "stock_list_collab_tasks" => crate::stock_commands::stock_list_collab_tasks(payload_str).await,
         "stock_upsert_collab_task" => crate::stock_commands::stock_upsert_collab_task(payload_str).await,
         "stock_complete_collab_task" => crate::stock_commands::stock_complete_collab_task(payload_str).await,

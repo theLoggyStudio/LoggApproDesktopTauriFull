@@ -5,7 +5,11 @@ import { Select } from "../../../items";
 import type { CircuitStepFieldDraft } from "../../utils/circuitFormFields";
 import { formFieldName } from "../../utils/circuitFormFields";
 import { isCircuitEntityFieldType } from "../../utils/circuitFieldTypes";
-import type { CircuitFormEntityOptions, EntitySelectOption } from "../../utils/circuitFormEntityOptions";
+import {
+  resolveEntityFieldDisplayValue,
+  type CircuitFormEntityOptions,
+  type EntitySelectOption,
+} from "../../utils/circuitFormEntityOptions";
 
 dayjs.locale("fr");
 
@@ -56,6 +60,17 @@ export function CircuitDynamicForm({ fields, value, onChange, articles, entityOp
           const name = formFieldName(f);
           const cur = value[name] ?? "";
           const label = (f.label.trim() || name) + (f.required ? " *" : "");
+          if (readOnly) {
+            const display =
+              isCircuitEntityFieldType(f.type) && cur
+                ? resolveEntityFieldDisplayValue(f.type, cur, entities)
+                : cur;
+            return (
+              <Form.Item key={f.key} label={label}>
+                <Input value={display} readOnly />
+              </Form.Item>
+            );
+          }
           if (isCircuitEntityFieldType(f.type)) {
             return renderEntitySelect(f, name, cur, label);
           }

@@ -29,6 +29,7 @@ const StockRolesPage = lazy(() => import("./body/Pages/stock/StockRolesPage"));
 const StockCircuitsLayout = lazy(() => import("./body/Pages/stock/StockCircuitsLayout"));
 const StockCircuitList = lazy(() => import("./body/Pages/stock/StockCircuitList"));
 const StockCircuitEditor = lazy(() => import("./body/Pages/stock/StockCircuitEditor"));
+const StockCircuitFillPage = lazy(() => import("./body/Pages/stock/StockCircuitFillPage"));
 const StockFormTemplatesList = lazy(() => import("./body/Pages/stock/StockFormTemplatesList"));
 const StockFormTemplateEditor = lazy(() => import("./body/Pages/stock/StockFormTemplateEditor"));
 
@@ -78,6 +79,7 @@ function AppContent() {
             </Route>
             <Route path="circuits" element={<StockCircuitsLayout />}>
               <Route index element={<StockCircuitList />} />
+              <Route path="fill" element={<StockCircuitFillPage />} />
               <Route path="forms" element={<StockFormTemplatesList />} />
               <Route path="forms/new" element={<StockFormTemplateEditor />} />
               <Route path="forms/:templateId/edit" element={<StockFormTemplateEditor />} />

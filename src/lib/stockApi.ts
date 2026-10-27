@@ -51,6 +51,11 @@ export type StockMovement = {
   receiptCount?: number;
   /** Identifiants des documents « reçu » liés à ce mouvement. */
   receiptDocumentIds?: string[];
+  /** Transfert d'emplacement (XFER). */
+  warehouseFromId?: string;
+  warehouseToId?: string;
+  warehouseFromName?: string;
+  warehouseToName?: string;
 };
 
 /** Ligne pour créer un mouvement multi-articles (prix par ligne). */
@@ -75,6 +80,28 @@ export type StockParty = {
 export async function fetchArticles(search?: string): Promise<StockArticle[]> {
   const r = await call<{ articles: StockArticle[] }>("stock_list_articles", search ? { search } : {});
   return r.articles ?? [];
+}
+
+/** Quantités par article dans un emplacement (transferts). */
+export async function fetchWarehouseStock(
+  warehouseId: string,
+): Promise<{ stocks: { articleId: string; qty: number }[]; byArticleId: Record<string, number> }> {
+  const r = await call<{
+    stocks?: { articleId: string; qty: number }[];
+    byArticleId?: Record<string, number>;
+  }>("stock_list_warehouse_stock", { warehouseId });
+  const byArticleId: Record<string, number> = {};
+  if (r.byArticleId && typeof r.byArticleId === "object") {
+    for (const [k, v] of Object.entries(r.byArticleId)) {
+      byArticleId[k] = typeof v === "number" ? v : Number(v) || 0;
+    }
+  }
+  for (const s of r.stocks ?? []) {
+    if (s.articleId && !(s.articleId in byArticleId)) {
+      byArticleId[s.articleId] = Number(s.qty) || 0;
+    }
+  }
+  return { stocks: r.stocks ?? [], byArticleId };
 }
 
 export async function saveArticle(a: Partial<StockArticle> & { sku: string; name: string }): Promise<{ success: boolean; id: string }> {
@@ -119,6 +146,10 @@ export async function addMovement(body: {
   refDoc?: string;
   supplierName?: string;
   clientName?: string;
+  /** Transfert d'emplacement : emplacement source (A). */
+  warehouseFromId?: string;
+  /** Transfert d'emplacement : emplacement destination (B). */
+  warehouseToId?: string;
   /** Un mouvement multi-lignes : une ligne par article avec prix d'entrée / de sortie. */
   lines?: StockMovementLineInput[];
   /** Mode historique : un seul article (alternative à `lines`). */
@@ -322,13 +353,17 @@ export type StockRefItem = {
   name: string;
   code: string;
   createdAt: string;
-  /** Présent pour les emplacements (liste globale ou filtrée par entrepôt). */
+  /** Présent pour les emplacements (liste globale ou filtrée par emplacement). */
   warehouseId?: string;
   warehouseName?: string;
   /** Emplacements : frais de logement optionnel (≥ 0). */
   housingFee?: number;
   /** Emplacements : périodicité de paiement (`monthly`, `quarterly`, …). */
   paymentPeriod?: string;
+  /**
+   * Unités : type de valeur (`float` | `numeric` | `alphanumeric`), toujours string côté API/DB.
+   */
+  unitType?: string;
 };
 
 export type StockRefKind = "unit" | "location" | "category" | "currency" | "warehouse";
@@ -352,6 +387,8 @@ export async function upsertRefItem(
     warehouseId?: string;
     housingFee?: number;
     paymentPeriod?: string;
+    /** Unités : `float` | `numeric` | `alphanumeric` (string). */
+    unitType?: string;
   },
 ): Promise<{ success: boolean; id: string }> {
   return call("stock_upsert_ref_item", { kind, ...body });
@@ -566,8 +603,46 @@ export type StockCollabTaskRow = {
   circuitStepIndex: number;
   createdAt: string;
   updatedAt: string;
+  /** Valeurs du formulaire (remplissage), pour affichage à la validation. */
+  formValues?: Record<string, string>;
   history?: StockCollabTaskHistoryRow[];
 };
+
+export type StockCircuitValidatedStep = {
+  stepIndex: number;
+  stepTitle: string;
+  fieldsJson: string;
+  formValues: Record<string, string>;
+  /** Libellé du collaborateur ayant rempli l’étape. */
+  filledBy?: string;
+  /** Date/heure de remplissage. */
+  filledAt?: string;
+  /** Libellé du collaborateur ayant signé / validé (si applicable). */
+  signedBy?: string;
+  /** Date/heure de signature / validation. */
+  signedAt?: string;
+  updatedAt?: string;
+};
+
+/** Étapes déjà validées (ou remplies sans validateur) avant l’étape courante. */
+export async function fetchCircuitValidatedSteps(body: {
+  circuitId: string;
+  beforeStepIndex: number;
+}): Promise<StockCircuitValidatedStep[]> {
+  const r = await call<{ steps: StockCircuitValidatedStep[] }>(
+    "stock_list_circuit_validated_steps",
+    body as Record<string, unknown>,
+  );
+  return (r.steps ?? []).map((s) => ({
+    ...s,
+    formValues:
+      s.formValues && typeof s.formValues === "object"
+        ? Object.fromEntries(
+            Object.entries(s.formValues).map(([k, v]) => [k, v == null ? "" : String(v)]),
+          )
+        : {},
+  }));
+}
 
 export async function fetchStockCollabTasks(body: {
   requesterUserId: string;
@@ -594,6 +669,8 @@ export async function completeStockCollabTask(body: {
   id: string;
   requesterUserId: string;
   requesterRole: string;
+  /** Valeurs saisies lors du remplissage (persistées pour la validation). */
+  formValues?: Record<string, string>;
 }): Promise<{ success: boolean }> {
   return call("stock_complete_collab_task", body as Record<string, unknown>);
 }

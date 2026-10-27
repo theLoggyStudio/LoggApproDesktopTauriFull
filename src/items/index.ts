@@ -9,3 +9,4 @@ export { Text } from "./Text.tsx";
 export { Panel } from "./Panel.tsx";
 export { Offcanvas } from "./Offcanvas.tsx";
 export { NavBar } from "./NavBar.tsx";
+export { FileDropZone } from "./FileDropZone.tsx";

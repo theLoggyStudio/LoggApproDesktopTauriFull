@@ -15,8 +15,22 @@ type Props = {
   rows?: number;
   placeholder?: string;
   disabled?: boolean;
+  /**
+   * Catalogue de base (ex. variables de l’écran sélectionné).
+   * Défaut : toutes les variables globales.
+   */
+  variables?: StockPrintTemplateVariable[];
   /** Variables supplémentaires (ex. clés extraites du modèle). */
   extraVariables?: StockPrintTemplateVariable[];
+  /**
+   * Affiche en permanence la liste des variables (clic pour insérer),
+   * en plus de l’autocomplete contextuel `{{`.
+   */
+  showCatalog?: boolean;
+  /** Titre du catalogue permanent (JSON / page). */
+  catalogTitle?: string;
+  /** Texte liste vide (JSON / page). */
+  emptyText?: string;
 };
 
 export function MustacheVariableTextarea({
@@ -25,7 +39,11 @@ export function MustacheVariableTextarea({
   rows = 12,
   placeholder,
   disabled,
+  variables,
   extraVariables = [],
+  showCatalog = false,
+  catalogTitle,
+  emptyText = "Aucune variable",
 }: Props) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const [caret, setCaret] = useState(0);
@@ -34,18 +52,22 @@ export function MustacheVariableTextarea({
 
   const allVars = useMemo(() => {
     const byKey = new Map<string, StockPrintTemplateVariable>();
-    for (const v of STOCK_PRINT_TEMPLATE_VARIABLES) byKey.set(v.key, v);
+    const base = variables ?? STOCK_PRINT_TEMPLATE_VARIABLES;
+    for (const v of base) byKey.set(v.key, v);
     for (const v of extraVariables) {
       if (!byKey.has(v.key)) byKey.set(v.key, v);
     }
     return [...byKey.values()];
-  }, [extraVariables]);
+  }, [variables, extraVariables]);
 
   const filtered = useMemo(() => {
     const q = (ctx?.filter ?? "").trim().toLowerCase();
     if (!q) return allVars;
     return allVars.filter(
-      (v) => v.key.toLowerCase().includes(q) || v.label.toLowerCase().includes(q) || (v.category ?? "").toLowerCase().includes(q),
+      (v) =>
+        v.key.toLowerCase().includes(q) ||
+        v.label.toLowerCase().includes(q) ||
+        (v.category ?? "").toLowerCase().includes(q),
     );
   }, [allVars, ctx?.filter]);
 
@@ -83,6 +105,35 @@ export function MustacheVariableTextarea({
       });
     },
     [value, caret, onChange],
+  );
+
+  const renderVarList = (data: StockPrintTemplateVariable[], emptyText: string) => (
+    <List
+      size="small"
+      dataSource={data}
+      locale={{ emptyText }}
+      renderItem={(item) => (
+        <List.Item
+          style={{ cursor: disabled ? "default" : "pointer", padding: "6px 8px" }}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            if (!disabled) insertVar(item.key);
+          }}
+        >
+          <div>
+            <Text strong>
+              <Text code>{item.key}</Text>
+            </Text>
+            <div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {item.label}
+                {item.category ? ` · ${item.category}` : ""}
+              </Text>
+            </div>
+          </div>
+        </List.Item>
+      )}
+    />
   );
 
   return (
@@ -125,26 +176,24 @@ export function MustacheVariableTextarea({
             </Text>
           }
         >
-          <List
-            size="small"
-            dataSource={filtered}
-            locale={{ emptyText: "Aucune variable" }}
-            renderItem={(item) => (
-              <List.Item style={{ cursor: "pointer", padding: "6px 8px" }} onMouseDown={(e) => e.preventDefault()} onClick={() => insertVar(item.key)}>
-                <div>
-                  <Text strong>
-                    <Text code>{item.key}</Text>
-                  </Text>
-                  <div>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {item.label}
-                      {item.category ? ` · ${item.category}` : ""}
-                    </Text>
-                  </div>
-                </div>
-              </List.Item>
-            )}
-          />
+          {renderVarList(filtered, emptyText)}
+        </Card>
+      ) : null}
+      {showCatalog && !ctx ? (
+        <Card
+          size="small"
+          style={{ marginTop: 8, maxHeight: 320, overflow: "auto" }}
+          title={
+            <Text type="secondary">
+              {catalogTitle ?? (
+                <>
+                  Variables <Text code>{"{{ }}"}</Text>
+                </>
+              )}
+            </Text>
+          }
+        >
+          {renderVarList(allVars, emptyText)}
         </Card>
       ) : null}
     </div>

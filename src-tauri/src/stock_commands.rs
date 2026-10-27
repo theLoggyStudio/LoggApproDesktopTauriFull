@@ -179,6 +179,7 @@ async fn ensure_stock_schema(conn: &mut AnyConnection) -> Result<(), String> {
     ensure_stock_collab_task_schema(conn).await?;
     ensure_stock_form_template_schema(conn).await?;
     ensure_stock_ref_schema(conn).await?;
+    ensure_stock_article_warehouse_schema(conn).await?;
     ensure_stock_document_schema(conn).await?;
     ensure_stock_kv_schema(conn).await?;
     ensure_default_print_models(conn).await?;
@@ -188,6 +189,273 @@ async fn ensure_stock_schema(conn: &mut AnyConnection) -> Result<(), String> {
         .await;
 
     Ok(())
+}
+
+/// Stock par emplacement (`stock_article.qty` = somme des quantités par emplacement).
+async fn ensure_stock_article_warehouse_schema(conn: &mut AnyConnection) -> Result<(), String> {
+    sqlx::query::<Any>(
+        r#"CREATE TABLE IF NOT EXISTS stock_article_warehouse (
+            article_id TEXT NOT NULL,
+            warehouse_id TEXT NOT NULL,
+            qty REAL NOT NULL DEFAULT 0,
+            PRIMARY KEY (article_id, warehouse_id),
+            FOREIGN KEY (article_id) REFERENCES stock_article (id),
+            FOREIGN KEY (warehouse_id) REFERENCES stock_ref_warehouse (id)
+        )"#,
+    )
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| format!("stock_article_warehouse: {}", e))?;
+
+    let articles = sqlx::query::<Any>("SELECT id, qty, IFNULL(location,'') FROM stock_article")
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    let default_wh = ensure_default_warehouse_row(conn).await?;
+    for a in articles {
+        let aid: String = a.try_get(0).unwrap_or_default();
+        if aid.is_empty() {
+            continue;
+        }
+        let cnt_row = sqlx::query::<Any>(
+            "SELECT COUNT(*) FROM stock_article_warehouse WHERE article_id = ?1",
+        )
+        .bind(&aid)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+        let cnt: i64 = cnt_row.try_get::<i64, _>(0).unwrap_or(0);
+        if cnt > 0 {
+            continue;
+        }
+        let qty: f64 = a.try_get(1).unwrap_or(0.0);
+        let loc: String = a.try_get(2).unwrap_or_default();
+        let mut wh_id = default_wh.clone();
+        if !loc.trim().is_empty() {
+            if let Ok(Some(r)) = sqlx::query::<Any>(
+                "SELECT warehouse_id FROM stock_ref_location WHERE id = ?1 OR name = ?1 COLLATE NOCASE LIMIT 1",
+            )
+            .bind(loc.trim())
+            .fetch_optional(&mut *conn)
+            .await
+            {
+                if let Ok(w) = r.try_get::<String, _>(0) {
+                    if !w.is_empty() {
+                        wh_id = w;
+                    }
+                }
+            }
+        }
+        sqlx::query::<Any>(
+            "INSERT OR IGNORE INTO stock_article_warehouse (article_id, warehouse_id, qty) VALUES (?1, ?2, ?3)",
+        )
+        .bind(&aid)
+        .bind(&wh_id)
+        .bind(qty)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+async fn warehouse_exists(conn: &mut AnyConnection, warehouse_id: &str) -> Result<bool, String> {
+    let row = sqlx::query::<Any>("SELECT COUNT(*) FROM stock_ref_warehouse WHERE id = ?1")
+        .bind(warehouse_id)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(row.try_get::<i64, _>(0).unwrap_or(0) > 0)
+}
+
+/// Quantité d'un article dans un emplacement (0 si aucune ligne).
+async fn get_article_warehouse_qty(
+    conn: &mut AnyConnection,
+    article_id: &str,
+    warehouse_id: &str,
+) -> Result<f64, String> {
+    let row = sqlx::query::<Any>(
+        "SELECT qty FROM stock_article_warehouse WHERE article_id = ?1 AND warehouse_id = ?2",
+    )
+    .bind(article_id)
+    .bind(warehouse_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(match row {
+        Some(r) => r.try_get::<f64, _>(0).unwrap_or(0.0),
+        None => 0.0,
+    })
+}
+
+/// Met à jour la qty emplacement puis resynchronise `stock_article.qty` (= somme).
+async fn set_article_warehouse_qty_and_sync(
+    conn: &mut AnyConnection,
+    article_id: &str,
+    warehouse_id: &str,
+    new_wh_qty: f64,
+    updated_at: &str,
+) -> Result<f64, String> {
+    if new_wh_qty < 0.0 {
+        return Err("Stock insuffisant dans l'emplacement source".to_string());
+    }
+    sqlx::query::<Any>(
+        r#"INSERT INTO stock_article_warehouse (article_id, warehouse_id, qty)
+           VALUES (?1, ?2, ?3)
+           ON CONFLICT(article_id, warehouse_id) DO UPDATE SET qty = excluded.qty"#,
+    )
+    .bind(article_id)
+    .bind(warehouse_id)
+    .bind(new_wh_qty)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let sum_row = sqlx::query::<Any>(
+        "SELECT COALESCE(SUM(qty), 0) FROM stock_article_warehouse WHERE article_id = ?1",
+    )
+    .bind(article_id)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|e| e.to_string())?;
+    let total: f64 = sum_row.try_get(0).map_err(|e| e.to_string())?;
+    sqlx::query::<Any>("UPDATE stock_article SET qty = ?1, updated_at = ?2 WHERE id = ?3")
+        .bind(total)
+        .bind(updated_at)
+        .bind(article_id)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(total)
+}
+
+async fn resolve_article_home_warehouse_id(
+    conn: &mut AnyConnection,
+    article_id: &str,
+) -> Result<String, String> {
+    let default_wh = ensure_default_warehouse_row(conn).await?;
+    let art = sqlx::query::<Any>("SELECT IFNULL(location,'') FROM stock_article WHERE id = ?1")
+        .bind(article_id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Article introuvable".to_string())?;
+    let loc: String = art.try_get(0).unwrap_or_default();
+    if loc.trim().is_empty() {
+        return Ok(default_wh);
+    }
+    if let Ok(Some(r)) = sqlx::query::<Any>(
+        "SELECT warehouse_id FROM stock_ref_location WHERE id = ?1 OR name = ?1 COLLATE NOCASE LIMIT 1",
+    )
+    .bind(loc.trim())
+    .fetch_optional(&mut *conn)
+    .await
+    {
+        if let Ok(w) = r.try_get::<String, _>(0) {
+            if !w.is_empty() {
+                return Ok(w);
+            }
+        }
+    }
+    Ok(default_wh)
+}
+
+/// Applique IN/OUT/ADJ en tenant compte du stock par emplacement.
+async fn apply_qty_on_home_warehouse(
+    conn: &mut AnyConnection,
+    article_id: &str,
+    move_type: &str,
+    qty: f64,
+    updated_at: &str,
+) -> Result<f64, String> {
+    let home_wh = resolve_article_home_warehouse_id(conn, article_id).await?;
+    match move_type {
+        "IN" => {
+            let current_wh = get_article_warehouse_qty(conn, article_id, &home_wh).await?;
+            set_article_warehouse_qty_and_sync(
+                conn,
+                article_id,
+                &home_wh,
+                current_wh + qty,
+                updated_at,
+            )
+            .await
+        }
+        "OUT" => {
+            let sum_row = sqlx::query::<Any>(
+                "SELECT COALESCE(SUM(qty), 0) FROM stock_article_warehouse WHERE article_id = ?1",
+            )
+            .bind(article_id)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
+            let total: f64 = sum_row.try_get(0).unwrap_or(0.0);
+            if total < qty {
+                return Err("Stock insuffisant pour cette sortie".to_string());
+            }
+            let mut remaining = qty;
+            let home_q = get_article_warehouse_qty(conn, article_id, &home_wh).await?;
+            let take_home = home_q.min(remaining);
+            if take_home > 0.0 {
+                set_article_warehouse_qty_and_sync(
+                    conn,
+                    article_id,
+                    &home_wh,
+                    home_q - take_home,
+                    updated_at,
+                )
+                .await?;
+                remaining -= take_home;
+            }
+            if remaining > 0.0 {
+                let others = sqlx::query::<Any>(
+                    "SELECT warehouse_id, qty FROM stock_article_warehouse WHERE article_id = ?1 AND warehouse_id != ?2 AND qty > 0 ORDER BY warehouse_id",
+                )
+                .bind(article_id)
+                .bind(&home_wh)
+                .fetch_all(&mut *conn)
+                .await
+                .map_err(|e| e.to_string())?;
+                for r in others {
+                    if remaining <= 0.0 {
+                        break;
+                    }
+                    let wid: String = r.try_get(0).unwrap_or_default();
+                    let wq: f64 = r.try_get(1).unwrap_or(0.0);
+                    let take = wq.min(remaining);
+                    set_article_warehouse_qty_and_sync(
+                        conn,
+                        article_id,
+                        &wid,
+                        wq - take,
+                        updated_at,
+                    )
+                    .await?;
+                    remaining -= take;
+                }
+            }
+            if remaining > 0.0 {
+                return Err("Stock insuffisant pour cette sortie".to_string());
+            }
+            let sum_row = sqlx::query::<Any>(
+                "SELECT COALESCE(SUM(qty), 0) FROM stock_article_warehouse WHERE article_id = ?1",
+            )
+            .bind(article_id)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(sum_row.try_get(0).unwrap_or(0.0))
+        }
+        "ADJ" => {
+            sqlx::query::<Any>("DELETE FROM stock_article_warehouse WHERE article_id = ?1")
+                .bind(article_id)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| e.to_string())?;
+            set_article_warehouse_qty_and_sync(conn, article_id, &home_wh, qty, updated_at).await
+        }
+        _ => Err("Type de mouvement invalide".to_string()),
+    }
 }
 
 async fn ensure_stock_party_and_migration(conn: &mut AnyConnection) -> Result<(), String> {
@@ -285,6 +553,22 @@ async fn ensure_stock_party_and_migration(conn: &mut AnyConnection) -> Result<()
             .execute(&mut *conn)
             .await
             .map_err(|e| e.to_string())?;
+    }
+    if !cols.contains("warehouse_from_id") {
+        sqlx::query::<Any>(
+            "ALTER TABLE stock_movement ADD COLUMN warehouse_from_id TEXT NOT NULL DEFAULT ''",
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    if !cols.contains("warehouse_to_id") {
+        sqlx::query::<Any>(
+            "ALTER TABLE stock_movement ADD COLUMN warehouse_to_id TEXT NOT NULL DEFAULT ''",
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
     }
     let _ = sqlx::query::<Any>(
         "UPDATE stock_movement SET batch_id = id WHERE batch_id = '' OR batch_id IS NULL",
@@ -552,7 +836,7 @@ async fn ensure_stock_default_circuits_if_empty(conn: &mut AnyConnection) -> Res
             R_MAG,
             "Magasinier",
             "MAG",
-            "Saisie côté entrepôt ou réception, sans obligation de lier à une fiche article.",
+            "Saisie côté emplacement ou réception, sans obligation de lier à une fiche article.",
         ),
         (
             R_RES,
@@ -875,6 +1159,7 @@ async fn ensure_stock_collab_task_schema(conn: &mut AnyConnection) -> Result<(),
             visible_role_id TEXT NOT NULL DEFAULT '',
             circuit_id TEXT NOT NULL DEFAULT '',
             circuit_step_index INTEGER NOT NULL DEFAULT -1,
+            form_values_json TEXT NOT NULL DEFAULT '{}',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )"#,
@@ -882,6 +1167,26 @@ async fn ensure_stock_collab_task_schema(conn: &mut AnyConnection) -> Result<(),
     .execute(&mut *conn)
     .await
     .map_err(|e| format!("stock_collab_task: {}", e))?;
+    let cols = sqlx::query::<Any>("PRAGMA table_info(stock_collab_task)")
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut has_fv = false;
+    for r in &cols {
+        let n: String = r.try_get::<String, _>(1).unwrap_or_default();
+        if n == "form_values_json" {
+            has_fv = true;
+            break;
+        }
+    }
+    if !has_fv {
+        sqlx::query::<Any>(
+            "ALTER TABLE stock_collab_task ADD COLUMN form_values_json TEXT NOT NULL DEFAULT '{}'",
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
     sqlx::query::<Any>(
         r#"CREATE TABLE IF NOT EXISTS stock_collab_task_history (
             id TEXT PRIMARY KEY,
@@ -898,6 +1203,54 @@ async fn ensure_stock_collab_task_schema(conn: &mut AnyConnection) -> Result<(),
     .await
     .map_err(|e| format!("stock_collab_task_history: {}", e))?;
     Ok(())
+}
+
+fn serialize_form_values_json(raw: Option<&Value>) -> String {
+    match raw {
+        Some(Value::Object(map)) => {
+            let mut out = Map::new();
+            for (k, v) in map {
+                let s = match v {
+                    Value::String(s) => s.clone(),
+                    Value::Number(n) => n.to_string(),
+                    Value::Bool(b) => b.to_string(),
+                    Value::Null => String::new(),
+                    other => other.to_string(),
+                };
+                out.insert(k.clone(), Value::String(s));
+            }
+            Value::Object(out).to_string()
+        }
+        Some(Value::String(s)) => {
+            // déjà une string JSON éventuelle
+            if serde_json::from_str::<Value>(s).is_ok() {
+                s.clone()
+            } else {
+                "{}".to_string()
+            }
+        }
+        _ => "{}".to_string(),
+    }
+}
+
+fn parse_form_values_json(raw: &str) -> Value {
+    match serde_json::from_str::<Value>(raw.trim()) {
+        Ok(Value::Object(m)) => {
+            let mut out = Map::new();
+            for (k, v) in m {
+                let s = match v {
+                    Value::String(s) => s,
+                    Value::Number(n) => n.to_string(),
+                    Value::Bool(b) => b.to_string(),
+                    Value::Null => String::new(),
+                    other => other.to_string(),
+                };
+                out.insert(k, Value::String(s));
+            }
+            Value::Object(out)
+        }
+        _ => json!({}),
+    }
 }
 
 async fn collab_task_log_action(
@@ -948,7 +1301,7 @@ fn form_template_screen_label(screen: &str) -> &'static str {
     match screen {
         "dashboard" => "Tableau de bord",
         "articles" => "Articles",
-        "warehouse" => "Entrepôt",
+        "warehouse" => "Emplacement",
         "movements" => "Mouvements",
         "fournisseurs" => "Fournisseurs",
         "clients" => "Clients",
@@ -979,8 +1332,8 @@ fn default_form_fields_json_for_screen(screen: &str) -> String {
             {"label": "Quantité", "type": "number", "required": false},
         ]),
         "warehouse" => json!([
-            {"label": "Entrepôt", "type": "warehouse", "required": true},
-            {"label": "Emplacement", "type": "location", "required": false},
+            {"label": "Emplacement", "type": "warehouse", "required": true},
+            {"label": "Zone", "type": "location", "required": false},
             {"label": "Notes", "type": "textarea", "required": false},
         ]),
         "movements" => json!([
@@ -1055,7 +1408,7 @@ async fn ensure_default_form_templates_per_screen(conn: &mut AnyConnection) -> R
     let seeds: [(&str, &str, &str, i64); 9] = [
         (TPL_DASHBOARD, "dashboard", "Formulaire — Tableau de bord", 0),
         (TPL_ARTICLES, "articles", "Formulaire — Articles", 0),
-        (TPL_WAREHOUSE, "warehouse", "Formulaire — Entrepôt", 0),
+        (TPL_WAREHOUSE, "warehouse", "Formulaire — Emplacement", 0),
         (
             STOCK_SYSTEM_MOVEMENT_FORM_TEMPLATE_ID,
             "movements",
@@ -1252,6 +1605,7 @@ async fn ensure_stock_ref_schema(conn: &mut AnyConnection) -> Result<(), String>
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL COLLATE NOCASE,
             code TEXT NOT NULL DEFAULT '',
+            unit_type TEXT NOT NULL DEFAULT 'alphanumeric',
             created_at TEXT NOT NULL,
             UNIQUE(name)
         )"#,
@@ -1259,6 +1613,7 @@ async fn ensure_stock_ref_schema(conn: &mut AnyConnection) -> Result<(), String>
     .execute(&mut *conn)
     .await
     .map_err(|e| format!("stock_ref_unit: {}", e))?;
+    ensure_stock_ref_unit_type_column(conn).await?;
     sqlx::query::<Any>(
         r#"CREATE TABLE IF NOT EXISTS stock_ref_warehouse (
             id TEXT PRIMARY KEY,
@@ -1301,7 +1656,51 @@ async fn ensure_stock_ref_schema(conn: &mut AnyConnection) -> Result<(), String>
     Ok(())
 }
 
-/// Crée la table `stock_ref_location` (schéma avec entrepôt) ou migre l’ancienne table sans `warehouse_id`.
+/// Colonne `unit_type` (toujours TEXT) : `float` | `numeric` | `alphanumeric`.
+async fn ensure_stock_ref_unit_type_column(conn: &mut AnyConnection) -> Result<(), String> {
+    let rows = sqlx::query::<Any>("PRAGMA table_info(stock_ref_unit)")
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut has = false;
+    for r in rows {
+        let n: String = r.try_get::<String, _>(1).unwrap_or_default();
+        if n == "unit_type" {
+            has = true;
+            break;
+        }
+    }
+    if !has {
+        sqlx::query::<Any>(
+            "ALTER TABLE stock_ref_unit ADD COLUMN unit_type TEXT NOT NULL DEFAULT 'alphanumeric'",
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Normalise le type d’unité ; valeur toujours stockée en string canonique.
+fn normalize_unit_type(raw: &str) -> String {
+    let s = raw.trim().to_lowercase();
+    // Normalise accents courants pour les alias FR.
+    let s = s
+        .replace('é', "e")
+        .replace('è', "e")
+        .replace('ê', "e")
+        .replace('à', "a");
+    match s.as_str() {
+        "float" | "flottant" | "decimal" => "float".to_string(),
+        "numeric" | "numerique" | "number" | "entier" | "int" | "integer" => "numeric".to_string(),
+        "alphanumeric" | "alphanumerique" | "text" | "texte" | "string" | "" => {
+            "alphanumeric".to_string()
+        }
+        _ => "alphanumeric".to_string(),
+    }
+}
+
+/// Crée la table `stock_ref_location` (schéma avec emplacement) ou migre l’ancienne table sans `warehouse_id`.
 async fn migrate_stock_ref_location_schema(conn: &mut AnyConnection) -> Result<(), String> {
     let exists_row = sqlx::query::<Any>(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='stock_ref_location'",
@@ -1407,7 +1806,7 @@ async fn migrate_stock_ref_location_schema(conn: &mut AnyConnection) -> Result<(
     Ok(())
 }
 
-/// Garantit au moins un entrepôt (pour rattacher les emplacements et les créations rapides).
+/// Garantit au moins un emplacement (pour rattacher les emplacements et les créations rapides).
 async fn ensure_default_warehouse_row(conn: &mut AnyConnection) -> Result<String, String> {
     let cnt_row = sqlx::query::<Any>("SELECT COUNT(*) FROM stock_ref_warehouse")
         .fetch_one(&mut *conn)
@@ -1429,7 +1828,7 @@ async fn ensure_default_warehouse_row(conn: &mut AnyConnection) -> Result<String
         "INSERT INTO stock_ref_warehouse (id, name, code, created_at) VALUES (?1, ?2, '', ?3)",
     )
     .bind(&id)
-    .bind("Entrepôt principal")
+    .bind("Emplacement principal")
     .bind(&now)
     .execute(&mut *conn)
     .await
@@ -1616,7 +2015,7 @@ fn doc_print_screen_label(screen: &str) -> &'static str {
         "docs" => "Documents",
         "parties" => "Tiers",
         "ref" => "Références",
-        "wh" => "Entrepôt",
+        "wh" => "Emplacement",
         "dashboard_recent" => "Tableau de bord — mouvements récents",
         "dashboard_categories" => "Tableau de bord — stocks par catégorie",
         _ => "Impression",
@@ -2009,6 +2408,50 @@ pub async fn stock_list_articles(payload: String) -> Result<Value, String> {
     enc(&json!({ "articles": list }))
 }
 
+/// Stock des articles dans un emplacement (`stock_article_warehouse`).
+#[tauri::command]
+pub async fn stock_list_warehouse_stock(payload: String) -> Result<Value, String> {
+    let p = parse_or_empty(&payload);
+    let warehouse_id = p
+        .body
+        .as_ref()
+        .and_then(|b| b.get("warehouseId"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if warehouse_id.is_empty() {
+        return Err("warehouseId requis".to_string());
+    }
+
+    let mut conn = stock_connect().await?;
+    ensure_stock_schema(&mut conn).await?;
+
+    if !warehouse_exists(&mut conn, warehouse_id).await? {
+        return Err("Emplacement introuvable".to_string());
+    }
+
+    let rows = sqlx::query::<Any>(
+        "SELECT article_id, qty FROM stock_article_warehouse WHERE warehouse_id = ?1 AND qty > 0",
+    )
+    .bind(warehouse_id)
+    .fetch_all(&mut conn)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut stocks = Vec::new();
+    let mut by_article = serde_json::Map::new();
+    for r in rows {
+        let aid: String = r.try_get(0).unwrap_or_default();
+        let qty: f64 = r.try_get(1).unwrap_or(0.0);
+        if aid.is_empty() {
+            continue;
+        }
+        stocks.push(json!({ "articleId": aid, "qty": qty }));
+        by_article.insert(aid, json!(qty));
+    }
+    enc(&json!({ "stocks": stocks, "byArticleId": Value::Object(by_article) }))
+}
+
 #[tauri::command]
 pub async fn stock_upsert_article(payload: String) -> Result<Value, String> {
     let p = parse_or_empty(&payload);
@@ -2183,7 +2626,7 @@ pub async fn stock_list_movements(payload: String) -> Result<Value, String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| s.to_uppercase())
-        .filter(|s| s == "IN" || s == "OUT" || s == "ADJ");
+        .filter(|s| s == "IN" || s == "OUT" || s == "ADJ" || s == "XFER");
 
     let limit_n = if article_filter.map(|a| !a.trim().is_empty()).unwrap_or(false)
         && date_from.is_none()
@@ -2225,8 +2668,12 @@ pub async fn stock_list_movements(payload: String) -> Result<Value, String> {
         r#"SELECT m.id, IFNULL(m.batch_id,''), m.line_no, m.article_id, a.sku, a.name, m.move_type, m.qty, m.reason, m.ref_doc,
                       IFNULL(m.supplier_name,''), IFNULL(m.client_name,''), m.created_at, IFNULL(m.price_in,0), IFNULL(m.price_out,0),
                       {},
-                      {}
+                      {},
+                      IFNULL(m.warehouse_from_id,''), IFNULL(m.warehouse_to_id,''),
+                      IFNULL(wf.name,''), IFNULL(wt.name,'')
                FROM stock_movement m JOIN stock_article a ON a.id = m.article_id
+               LEFT JOIN stock_ref_warehouse wf ON wf.id = m.warehouse_from_id
+               LEFT JOIN stock_ref_warehouse wt ON wt.id = m.warehouse_to_id
                {} ORDER BY m.created_at DESC, m.batch_id, m.line_no LIMIT {}"#,
         receipt_subcount, receipt_subids, where_sql, limit_n
     );
@@ -2266,6 +2713,10 @@ pub async fn stock_list_movements(payload: String) -> Result<Value, String> {
             "priceOut": r.try_get::<f64, _>(14).unwrap_or(0.0),
             "receiptCount": receipt_count,
             "receiptDocumentIds": receipt_document_ids,
+            "warehouseFromId": r.try_get::<String, _>(17).unwrap_or_default(),
+            "warehouseToId": r.try_get::<String, _>(18).unwrap_or_default(),
+            "warehouseFromName": r.try_get::<String, _>(19).unwrap_or_default(),
+            "warehouseToName": r.try_get::<String, _>(20).unwrap_or_default(),
         }));
     }
     enc(&json!({ "movements": list }))
@@ -2305,8 +2756,8 @@ pub async fn stock_add_movement(payload: String) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_uppercase();
-    if !matches!(move_type.as_str(), "IN" | "OUT" | "ADJ") {
-        return Err("moveType doit être IN, OUT ou ADJ".to_string());
+    if !matches!(move_type.as_str(), "IN" | "OUT" | "ADJ" | "XFER") {
+        return Err("moveType doit être IN, OUT, ADJ ou XFER".to_string());
     }
     let reason = obj.get("reason").and_then(|v| v.as_str()).unwrap_or("");
     let ref_doc = obj.get("refDoc").and_then(|v| v.as_str()).unwrap_or("");
@@ -2325,6 +2776,18 @@ pub async fn stock_add_movement(payload: String) -> Result<Value, String> {
         "OUT" => ("", client_in),
         _ => ("", ""),
     };
+    let warehouse_from_id = obj
+        .get("warehouseFromId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let warehouse_to_id = obj
+        .get("warehouseToId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
     let price_in_root = obj.get("priceIn").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let price_out_root = obj.get("priceOut").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
@@ -2334,196 +2797,201 @@ pub async fn stock_add_movement(payload: String) -> Result<Value, String> {
         resolve_movement_created_at(obj.get("createdAt").and_then(|v| v.as_str()))?;
     let party_now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-    fn apply_qty_change(
-        move_type: &str,
-        current: f64,
-        qty: f64,
-    ) -> Result<f64, String> {
-        match move_type {
-            "IN" => Ok(current + qty),
-            "OUT" => {
-                let n = current - qty;
-                if n < 0.0 {
-                    return Err("Stock insuffisant pour cette sortie".to_string());
-                }
-                Ok(n)
-            }
-            "ADJ" => Ok(qty),
-            _ => unreachable!(),
+    if move_type == "XFER" {
+        if warehouse_from_id.is_empty() || warehouse_to_id.is_empty() {
+            return Err("Emplacement source et destination requis pour un transfert".to_string());
+        }
+        if warehouse_from_id == warehouse_to_id {
+            return Err("Les emplacements source et destination doivent être différents".to_string());
+        }
+        if !warehouse_exists(&mut conn, &warehouse_from_id).await? {
+            return Err("Emplacement source introuvable".to_string());
+        }
+        if !warehouse_exists(&mut conn, &warehouse_to_id).await? {
+            return Err("Emplacement destination introuvable".to_string());
         }
     }
 
-    if let Some(lines_arr) = obj.get("lines").and_then(|v| v.as_array()) {
+    let lines_owned: Vec<Value> = if let Some(lines_arr) = obj.get("lines").and_then(|v| v.as_array())
+    {
         if lines_arr.is_empty() {
             return Err("Au moins une ligne article est requise".to_string());
         }
-        let batch_id = Uuid::new_v4().to_string();
-        let mut tx = Acquire::begin(&mut conn).await.map_err(|e| e.to_string())?;
-        let mut first_movement_id: Option<String> = None;
-        let mut last_new_qty: f64 = 0.0;
+        lines_arr.clone()
+    } else {
+        let article_id = obj
+            .get("articleId")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .ok_or("articleId requis")?;
+        let qty = obj.get("qty").and_then(|v| v.as_f64()).ok_or("qty requis")?;
+        vec![json!({
+            "articleId": article_id,
+            "qty": qty,
+            "priceIn": price_in_root,
+            "priceOut": price_out_root,
+        })]
+    };
 
-        for (line_no, line_v) in lines_arr.iter().enumerate() {
-            let lo = line_v.as_object().ok_or("Ligne de mouvement invalide")?;
-            let article_id = lo
-                .get("articleId")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .ok_or("articleId requis pour chaque ligne")?;
-            let qty = lo.get("qty").and_then(|v| v.as_f64()).ok_or("qty requis pour chaque ligne")?;
-            if qty <= 0.0 && move_type != "ADJ" {
-                return Err("Quantité doit être positive sur chaque ligne".to_string());
+    let batch_id = Uuid::new_v4().to_string();
+    let mut tx = Acquire::begin(&mut conn).await.map_err(|e| e.to_string())?;
+    let mut first_movement_id: Option<String> = None;
+    let mut last_new_qty: f64 = 0.0;
+
+    for (line_no, line_v) in lines_owned.iter().enumerate() {
+        let lo = line_v.as_object().ok_or("Ligne de mouvement invalide")?;
+        let article_id = lo
+            .get("articleId")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .ok_or("articleId requis pour chaque ligne")?;
+        let qty = lo
+            .get("qty")
+            .and_then(|v| v.as_f64())
+            .ok_or("qty requis pour chaque ligne")?;
+        if qty <= 0.0 && move_type != "ADJ" {
+            let _ = tx.rollback().await;
+            return Err("Quantité doit être positive sur chaque ligne".to_string());
+        }
+        let price_in = lo.get("priceIn").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let price_out = lo.get("priceOut").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+        let exists = sqlx::query::<Any>("SELECT id FROM stock_article WHERE id = ?1")
+            .bind(article_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        if exists.is_none() {
+            let _ = tx.rollback().await;
+            return Err("Article introuvable".to_string());
+        }
+
+        let new_qty = if move_type == "XFER" {
+            let from_q =
+                match get_article_warehouse_qty(&mut *tx, article_id, &warehouse_from_id).await {
+                    Ok(q) => q,
+                    Err(e) => {
+                        let _ = tx.rollback().await;
+                        return Err(e);
+                    }
+                };
+            if from_q < qty {
+                let _ = tx.rollback().await;
+                return Err("Stock insuffisant dans l'emplacement source".to_string());
             }
-            let price_in = lo
-                .get("priceIn")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-            let price_out = lo
-                .get("priceOut")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-
-            let row = sqlx::query::<Any>("SELECT qty FROM stock_article WHERE id = ?1")
-                .bind(article_id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|e| e.to_string())?;
-            let current = match row {
-                Some(r) => r.try_get::<f64, _>(0).map_err(|e| e.to_string())?,
-                None => {
-                    let _ = tx.rollback().await;
-                    return Err("Article introuvable".to_string());
+            let to_q =
+                match get_article_warehouse_qty(&mut *tx, article_id, &warehouse_to_id).await {
+                    Ok(q) => q,
+                    Err(e) => {
+                        let _ = tx.rollback().await;
+                        return Err(e);
+                    }
+                };
+            if let Err(e) = set_article_warehouse_qty_and_sync(
+                &mut *tx,
+                article_id,
+                &warehouse_from_id,
+                from_q - qty,
+                &movement_ts,
+            )
+            .await
+            {
+                let _ = tx.rollback().await;
+                return Err(e);
+            }
+            match set_article_warehouse_qty_and_sync(
+                &mut *tx,
+                article_id,
+                &warehouse_to_id,
+                to_q + qty,
+                &movement_ts,
+            )
+            .await
+            {
+                Ok(n) => {
+                    // Emplacement article → premier emplacement de la destination (si existant).
+                    if let Ok(Some(loc_r)) = sqlx::query::<Any>(
+                        "SELECT id FROM stock_ref_location WHERE warehouse_id = ?1 ORDER BY name COLLATE NOCASE LIMIT 1",
+                    )
+                    .bind(&warehouse_to_id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    {
+                        let loc_id: String = loc_r.try_get(0).unwrap_or_default();
+                        if !loc_id.is_empty() {
+                            let _ = sqlx::query::<Any>(
+                                "UPDATE stock_article SET location = ?1, updated_at = ?2 WHERE id = ?3",
+                            )
+                            .bind(&loc_id)
+                            .bind(&movement_ts)
+                            .bind(article_id)
+                            .execute(&mut *tx)
+                            .await;
+                        }
+                    }
+                    n
                 }
-            };
-            let new_qty = match apply_qty_change(move_type.as_str(), current, qty) {
+                Err(e) => {
+                    let _ = tx.rollback().await;
+                    return Err(e);
+                }
+            }
+        } else {
+            match apply_qty_on_home_warehouse(
+                &mut *tx,
+                article_id,
+                move_type.as_str(),
+                qty,
+                &movement_ts,
+            )
+            .await
+            {
                 Ok(n) => n,
                 Err(e) => {
                     let _ = tx.rollback().await;
                     return Err(e);
                 }
-            };
-            last_new_qty = new_qty;
-
-            let mid = Uuid::new_v4().to_string();
-            if line_no == 0 {
-                first_movement_id = Some(mid.clone());
             }
-            sqlx::query::<Any>(
-                r#"INSERT INTO stock_movement (id, article_id, move_type, qty, reason, ref_doc, supplier_name, client_name, created_at, batch_id, line_no, price_in, price_out)
-                   VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)"#,
-            )
-            .bind(&mid)
-            .bind(article_id)
-            .bind(move_type.as_str())
-            .bind(qty)
-            .bind(reason)
-            .bind(ref_doc)
-            .bind(supplier_name)
-            .bind(client_name)
-            .bind(&movement_ts)
-            .bind(&batch_id)
-            .bind(line_no as i64)
-            .bind(price_in)
-            .bind(price_out)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
+        };
+        last_new_qty = new_qty;
 
-            sqlx::query::<Any>("UPDATE stock_article SET qty = ?1, updated_at = ?2 WHERE id = ?3")
-                .bind(new_qty)
-                .bind(&movement_ts)
-                .bind(article_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| e.to_string())?;
+        let mid = Uuid::new_v4().to_string();
+        if line_no == 0 {
+            first_movement_id = Some(mid.clone());
         }
-
-        tx.commit().await.map_err(|e| e.to_string())?;
-
-        if !supplier_name.is_empty() {
-            let pid = Uuid::new_v4().to_string();
-            let _ = sqlx::query::<Any>(
-                "INSERT OR IGNORE INTO stock_party (id, kind, name, address, created_at) VALUES (?1, 'SUPPLIER', ?2, '', ?3)",
-            )
-            .bind(&pid)
-            .bind(supplier_name)
-            .bind(&party_now)
-            .execute(&mut conn)
-            .await;
-        }
-        if !client_name.is_empty() {
-            let pid = Uuid::new_v4().to_string();
-            let _ = sqlx::query::<Any>(
-                "INSERT OR IGNORE INTO stock_party (id, kind, name, address, created_at) VALUES (?1, 'CLIENT', ?2, '', ?3)",
-            )
-            .bind(&pid)
-            .bind(client_name)
-            .bind(&party_now)
-            .execute(&mut conn)
-            .await;
-        }
-
-        let fid = first_movement_id.unwrap_or_default();
-        return enc(&json!({
-            "success": true,
-            "movementId": fid,
-            "batchId": batch_id,
-            "newQty": last_new_qty,
-        }));
-    }
-
-    let article_id = obj
-        .get("articleId")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .ok_or("articleId requis")?;
-    let qty = obj.get("qty").and_then(|v| v.as_f64()).ok_or("qty requis")?;
-    if qty <= 0.0 && move_type != "ADJ" {
-        return Err("Quantité doit être positive".to_string());
-    }
-
-    let row = sqlx::query::<Any>("SELECT qty FROM stock_article WHERE id = ?1")
+        let wh_from = if move_type == "XFER" {
+            warehouse_from_id.as_str()
+        } else {
+            ""
+        };
+        let wh_to = if move_type == "XFER" {
+            warehouse_to_id.as_str()
+        } else {
+            ""
+        };
+        sqlx::query::<Any>(
+            r#"INSERT INTO stock_movement (id, article_id, move_type, qty, reason, ref_doc, supplier_name, client_name, created_at, batch_id, line_no, price_in, price_out, warehouse_from_id, warehouse_to_id)
+               VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)"#,
+        )
+        .bind(&mid)
         .bind(article_id)
-        .fetch_optional(&mut conn)
-        .await
-        .map_err(|e| e.to_string())?;
-    let current = match row {
-        Some(r) => r.try_get::<f64, _>(0).map_err(|e| e.to_string())?,
-        None => return Err("Article introuvable".to_string()),
-    };
-
-    let new_qty = apply_qty_change(move_type.as_str(), current, qty)?;
-
-    let mid = Uuid::new_v4().to_string();
-
-    let mut tx = Acquire::begin(&mut conn).await.map_err(|e| e.to_string())?;
-    sqlx::query::<Any>(
-        r#"INSERT INTO stock_movement (id, article_id, move_type, qty, reason, ref_doc, supplier_name, client_name, created_at, batch_id, line_no, price_in, price_out)
-           VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)"#,
-    )
-    .bind(&mid)
-    .bind(article_id)
-    .bind(move_type.as_str())
-    .bind(qty)
-    .bind(reason)
-    .bind(ref_doc)
-    .bind(supplier_name)
-    .bind(client_name)
-    .bind(&movement_ts)
-    .bind(&mid)
-    .bind(0_i64)
-    .bind(price_in_root)
-    .bind(price_out_root)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    sqlx::query::<Any>("UPDATE stock_article SET qty = ?1, updated_at = ?2 WHERE id = ?3")
-        .bind(new_qty)
+        .bind(move_type.as_str())
+        .bind(qty)
+        .bind(reason)
+        .bind(ref_doc)
+        .bind(supplier_name)
+        .bind(client_name)
         .bind(&movement_ts)
-        .bind(article_id)
+        .bind(&batch_id)
+        .bind(line_no as i64)
+        .bind(price_in)
+        .bind(price_out)
+        .bind(wh_from)
+        .bind(wh_to)
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
+    }
 
     tx.commit().await.map_err(|e| e.to_string())?;
 
@@ -2550,7 +3018,13 @@ pub async fn stock_add_movement(payload: String) -> Result<Value, String> {
         .await;
     }
 
-    enc(&json!({ "success": true, "movementId": mid, "batchId": mid, "newQty": new_qty }))
+    let fid = first_movement_id.unwrap_or_default();
+    enc(&json!({
+        "success": true,
+        "movementId": fid,
+        "batchId": batch_id,
+        "newQty": last_new_qty,
+    }))
 }
 
 #[tauri::command]
@@ -3316,6 +3790,24 @@ pub async fn stock_list_ref_items(payload: String) -> Result<Value, String> {
     }
 
     let table = ref_items_table(&kind)?;
+    if kind == "unit" {
+        let sql = "SELECT id, name, code, created_at, IFNULL(unit_type,'alphanumeric') FROM stock_ref_unit ORDER BY name COLLATE NOCASE";
+        let rows = sqlx::query::<Any>(sql)
+            .fetch_all(&mut conn)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(json!({
+                "id": r.try_get::<String, _>(0).unwrap_or_default(),
+                "name": r.try_get::<String, _>(1).unwrap_or_default(),
+                "code": r.try_get::<String, _>(2).unwrap_or_default(),
+                "createdAt": r.try_get::<String, _>(3).unwrap_or_default(),
+                "unitType": normalize_unit_type(&r.try_get::<String, _>(4).unwrap_or_default()),
+            }));
+        }
+        return enc(&json!({ "items": list }));
+    }
     let sql = format!(
         "SELECT id, name, code, created_at FROM {} ORDER BY name COLLATE NOCASE",
         table
@@ -3352,6 +3844,16 @@ pub async fn stock_upsert_ref_item(payload: String) -> Result<Value, String> {
         return Err("Libellé requis".to_string());
     }
     let code = obj.get("code").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let unit_type = if kind == "unit" {
+        // Toujours enregistré en string (`float` | `numeric` | `alphanumeric`).
+        normalize_unit_type(
+            obj.get("unitType")
+                .and_then(|v| v.as_str())
+                .unwrap_or("alphanumeric"),
+        )
+    } else {
+        String::new()
+    };
     let id_in = obj.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
     let mut conn = stock_connect().await?;
     ensure_stock_schema(&mut conn).await?;
@@ -3363,7 +3865,7 @@ pub async fn stock_upsert_ref_item(payload: String) -> Result<Value, String> {
                 .get("warehouseId")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
-                .ok_or_else(|| "Entrepôt requis pour créer un emplacement".to_string())?;
+                .ok_or_else(|| "Emplacement parent requis pour créer un emplacement".to_string())?;
             let housing_fee = obj
                 .get("housingFee")
                 .and_then(|v| v.as_f64())
@@ -3386,7 +3888,25 @@ pub async fn stock_upsert_ref_item(payload: String) -> Result<Value, String> {
             .await
             .map_err(|e| {
                 if e.to_string().contains("UNIQUE") {
-                    "Ce libellé existe déjà pour cet entrepôt".to_string()
+                    "Ce libellé existe déjà pour cet emplacement".to_string()
+                } else {
+                    e.to_string()
+                }
+            })?;
+        } else if kind == "unit" {
+            sqlx::query::<Any>(
+                "INSERT INTO stock_ref_unit (id, name, code, unit_type, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            )
+            .bind(&id)
+            .bind(name)
+            .bind(code)
+            .bind(&unit_type)
+            .bind(&now)
+            .execute(&mut conn)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("UNIQUE") {
+                    "Ce libellé existe déjà".to_string()
                 } else {
                     e.to_string()
                 }
@@ -3413,11 +3933,6 @@ pub async fn stock_upsert_ref_item(payload: String) -> Result<Value, String> {
         }
         enc(&json!({ "success": true, "id": id }))
     } else {
-        let sql = if kind == "location" {
-            "UPDATE stock_ref_location SET name = ?1, code = ?2, housing_fee = ?3, payment_period = ?4 WHERE id = ?5".to_string()
-        } else {
-            format!("UPDATE {} SET name = ?1, code = ?2 WHERE id = ?3", table)
-        };
         if kind == "location" {
             let housing_fee = obj
                 .get("housingFee")
@@ -3427,22 +3942,62 @@ pub async fn stock_upsert_ref_item(payload: String) -> Result<Value, String> {
             let payment_period = normalize_location_payment_period(
                 obj.get("paymentPeriod").and_then(|v| v.as_str()).unwrap_or(""),
             );
-            sqlx::query::<Any>(&sql)
-                .bind(name)
-                .bind(code)
-                .bind(housing_fee)
-                .bind(&payment_period)
+            sqlx::query::<Any>(
+                "UPDATE stock_ref_location SET name = ?1, code = ?2, housing_fee = ?3, payment_period = ?4 WHERE id = ?5",
+            )
+            .bind(name)
+            .bind(code)
+            .bind(housing_fee)
+            .bind(&payment_period)
+            .bind(id_in)
+            .execute(&mut conn)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("UNIQUE") {
+                    "Ce libellé existe déjà".to_string()
+                } else {
+                    e.to_string()
+                }
+            })?;
+        } else if kind == "unit" {
+            let old_name: String = sqlx::query::<Any>("SELECT name FROM stock_ref_unit WHERE id = ?1")
                 .bind(id_in)
+                .fetch_optional(&mut conn)
+                .await
+                .map_err(|e| e.to_string())?
+                .and_then(|r| r.try_get::<String, _>(0).ok())
+                .unwrap_or_default();
+            sqlx::query::<Any>(
+                "UPDATE stock_ref_unit SET name = ?1, code = ?2, unit_type = ?3 WHERE id = ?4",
+            )
+            .bind(name)
+            .bind(code)
+            .bind(&unit_type)
+            .bind(id_in)
+            .execute(&mut conn)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("UNIQUE") {
+                    "Ce libellé existe déjà".to_string()
+                } else {
+                    e.to_string()
+                }
+            })?;
+            // Les articles stockent le libellé d’unité (dénormalisé) : propager le renommage.
+            if !old_name.trim().is_empty() && old_name.trim() != name.trim() {
+                let now_art = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                sqlx::query::<Any>(
+                    "UPDATE stock_article SET unit = ?1, updated_at = ?2 WHERE unit = ?3 COLLATE NOCASE",
+                )
+                .bind(name)
+                .bind(&now_art)
+                .bind(old_name.trim())
                 .execute(&mut conn)
                 .await
-                .map_err(|e| {
-                    if e.to_string().contains("UNIQUE") {
-                        "Ce libellé existe déjà".to_string()
-                    } else {
-                        e.to_string()
-                    }
-                })?;
+                .map_err(|e| e.to_string())?;
+            }
         } else {
+            let sql = format!("UPDATE {} SET name = ?1, code = ?2 WHERE id = ?3", table);
             sqlx::query::<Any>(&sql)
                 .bind(name)
                 .bind(code)
@@ -3487,7 +4042,7 @@ pub async fn stock_delete_ref_item(payload: String) -> Result<Value, String> {
             .map_err(|e| e.to_string())?;
         let n: i64 = cnt_row.try_get::<i64, _>(0).unwrap_or(0);
         if n > 0 {
-            return Err("Supprimez d'abord les emplacements de cet entrepôt.".to_string());
+            return Err("Supprimez d'abord les emplacements associés à celui-ci.".to_string());
         }
     }
     let sql = format!("DELETE FROM {} WHERE id = ?1", table);
@@ -3705,9 +4260,12 @@ pub async fn stock_export_csv(payload: String) -> Result<Value, String> {
             "clients_export.csv"
         }
         "ref_unit" => {
-            csv_push_row(&mut w, &["id".into(), "name".into(), "code".into(), "createdAt".into()]);
+            csv_push_row(
+                &mut w,
+                &["id".into(), "name".into(), "code".into(), "unitType".into(), "createdAt".into()],
+            );
             let rows = sqlx::query::<Any>(
-                "SELECT id, name, code, created_at FROM stock_ref_unit ORDER BY name COLLATE NOCASE",
+                "SELECT id, name, code, IFNULL(unit_type,'alphanumeric'), created_at FROM stock_ref_unit ORDER BY name COLLATE NOCASE",
             )
             .fetch_all(&mut conn)
             .await
@@ -3719,7 +4277,8 @@ pub async fn stock_export_csv(payload: String) -> Result<Value, String> {
                         r.try_get::<String, _>(0).unwrap_or_default(),
                         r.try_get::<String, _>(1).unwrap_or_default(),
                         r.try_get::<String, _>(2).unwrap_or_default(),
-                        r.try_get::<String, _>(3).unwrap_or_default(),
+                        normalize_unit_type(&r.try_get::<String, _>(3).unwrap_or_default()),
+                        r.try_get::<String, _>(4).unwrap_or_default(),
                     ],
                 );
             }
@@ -4140,21 +4699,45 @@ pub async fn stock_import_csv(payload: String) -> Result<Value, String> {
                 }
                 let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
                 let id = Uuid::new_v4().to_string();
-                let sql = format!(
-                    "INSERT OR IGNORE INTO {} (id, name, code, created_at) VALUES (?1, ?2, ?3, ?4)",
-                    tbl
-                );
-                let r = sqlx::query::<Any>(&sql)
+                if kind == "unit" {
+                    // Export actuel : id,name,code,unitType,createdAt — ancien : id,name,code,createdAt
+                    let unit_type = if row.len() >= 5 {
+                        normalize_unit_type(row.get(3).unwrap_or(""))
+                    } else {
+                        "alphanumeric".to_string()
+                    };
+                    let r = sqlx::query::<Any>(
+                        "INSERT OR IGNORE INTO stock_ref_unit (id, name, code, unit_type, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    )
                     .bind(&id)
                     .bind(name)
                     .bind(code)
+                    .bind(&unit_type)
                     .bind(&now)
                     .execute(&mut conn)
                     .await;
-                match r {
-                    Ok(x) if x.rows_affected() > 0 => inserted += 1,
-                    Ok(_) => updated += 1,
-                    Err(e) => errors.push(format!("ligne {}: {}", line_no + 2, e)),
+                    match r {
+                        Ok(x) if x.rows_affected() > 0 => inserted += 1,
+                        Ok(_) => updated += 1,
+                        Err(e) => errors.push(format!("ligne {}: {}", line_no + 2, e)),
+                    }
+                } else {
+                    let sql = format!(
+                        "INSERT OR IGNORE INTO {} (id, name, code, created_at) VALUES (?1, ?2, ?3, ?4)",
+                        tbl
+                    );
+                    let r = sqlx::query::<Any>(&sql)
+                        .bind(&id)
+                        .bind(name)
+                        .bind(code)
+                        .bind(&now)
+                        .execute(&mut conn)
+                        .await;
+                    match r {
+                        Ok(x) if x.rows_affected() > 0 => inserted += 1,
+                        Ok(_) => updated += 1,
+                        Err(e) => errors.push(format!("ligne {}: {}", line_no + 2, e)),
+                    }
                 }
             }
         }
@@ -5198,6 +5781,185 @@ pub async fn stock_delete_circuit(payload: String) -> Result<Value, String> {
     enc(&json!({ "success": r.rows_affected() > 0 }))
 }
 
+async fn stock_user_display_label(conn: &mut AnyConnection, user_id: &str) -> String {
+    let uid = user_id.trim();
+    if uid.is_empty() {
+        return String::new();
+    }
+    let row = sqlx::query::<Any>(
+        "SELECT login, display_name FROM stock_app_user WHERE id = ?1",
+    )
+    .bind(uid)
+    .fetch_optional(&mut *conn)
+    .await
+    .ok()
+    .flatten();
+    let Some(r) = row else {
+        return uid.to_string();
+    };
+    let login: String = r.try_get(0).unwrap_or_default();
+    let display_name: String = r.try_get(1).unwrap_or_default();
+    if display_name.trim().is_empty() {
+        login
+    } else {
+        display_name
+    }
+}
+
+/// Dernière action `completed` d’une tâche (acteur + date).
+async fn collab_task_completed_meta(
+    conn: &mut AnyConnection,
+    task_id: &str,
+) -> (String, String) {
+    let row = sqlx::query::<Any>(
+        r#"SELECT actor_user_id, created_at FROM stock_collab_task_history
+           WHERE task_id = ?1 AND action = 'completed'
+           ORDER BY created_at DESC LIMIT 1"#,
+    )
+    .bind(task_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .ok()
+    .flatten();
+    match row {
+        Some(r) => (
+            r.try_get::<String, _>(0).unwrap_or_default(),
+            r.try_get::<String, _>(1).unwrap_or_default(),
+        ),
+        None => (String::new(), String::new()),
+    }
+}
+
+/// Étapes déjà traitées (validées, ou remplies si pas de rôle validateur) avant l’étape courante.
+#[tauri::command]
+pub async fn stock_list_circuit_validated_steps(payload: String) -> Result<Value, String> {
+    let p = parse_or_empty(&payload);
+    let body = p.body.ok_or("Corps manquant")?;
+    let obj = body.as_object().ok_or("Body invalide")?;
+    let circuit_id = obj
+        .get("circuitId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if circuit_id.is_empty() {
+        return Err("circuitId requis".to_string());
+    }
+    let before_step_index = obj
+        .get("beforeStepIndex")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    if before_step_index <= 0 {
+        return enc(&json!({ "steps": [] }));
+    }
+
+    let mut conn = stock_connect().await?;
+    ensure_stock_schema(&mut conn).await?;
+
+    let rows = sqlx::query::<Any>(
+        r#"SELECT t.id, t.circuit_step_index, t.kind, IFNULL(t.form_values_json,'{}'), t.updated_at,
+                  IFNULL(s.title,''), IFNULL(s.fields_json,'[]')
+           FROM stock_collab_task t
+           LEFT JOIN stock_circuit_step s
+             ON s.circuit_id = t.circuit_id AND s.position = t.circuit_step_index
+           WHERE t.circuit_id = ?1
+             AND t.status = 'done'
+             AND t.kind IN ('circuit_fill', 'circuit_validate')
+             AND t.circuit_step_index >= 0
+             AND t.circuit_step_index < ?2
+           ORDER BY t.circuit_step_index ASC,
+                    CASE t.kind WHEN 'circuit_fill' THEN 0 ELSE 1 END,
+                    t.updated_at DESC"#,
+    )
+    .bind(circuit_id)
+    .bind(before_step_index)
+    .fetch_all(&mut conn)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    #[derive(Default)]
+    struct StepAcc {
+        step_title: String,
+        fields_json: String,
+        form_values_raw: String,
+        filled_by_id: String,
+        filled_at: String,
+        signed_by_id: String,
+        signed_at: String,
+        has_validate: bool,
+    }
+
+    let mut by_step: std::collections::BTreeMap<i64, StepAcc> = std::collections::BTreeMap::new();
+    let mut seen_fill = std::collections::HashSet::<i64>::new();
+    let mut seen_validate = std::collections::HashSet::<i64>::new();
+
+    for r in rows {
+        let task_id: String = r.try_get(0).unwrap_or_default();
+        let step_index: i64 = r.try_get(1).unwrap_or(-1);
+        if step_index < 0 {
+            continue;
+        }
+        let kind: String = r.try_get(2).unwrap_or_default();
+        let form_values_raw: String = r.try_get(3).unwrap_or_else(|_| "{}".to_string());
+        let updated_at: String = r.try_get(4).unwrap_or_default();
+        let step_title: String = r.try_get(5).unwrap_or_default();
+        let fields_json: String = r.try_get(6).unwrap_or_else(|_| "[]".to_string());
+
+        let acc = by_step.entry(step_index).or_default();
+        if acc.step_title.is_empty() {
+            acc.step_title = step_title;
+        }
+        if acc.fields_json.is_empty() || acc.fields_json == "[]" {
+            acc.fields_json = fields_json;
+        }
+
+        let (actor_id, hist_at) = collab_task_completed_meta(&mut conn, &task_id).await;
+        let at = if hist_at.trim().is_empty() {
+            updated_at
+        } else {
+            hist_at
+        };
+
+        if kind == "circuit_fill" {
+            if !seen_fill.insert(step_index) {
+                continue;
+            }
+            acc.filled_by_id = actor_id;
+            acc.filled_at = at;
+            if !acc.has_validate {
+                acc.form_values_raw = form_values_raw;
+            }
+        } else if kind == "circuit_validate" {
+            if !seen_validate.insert(step_index) {
+                continue;
+            }
+            acc.has_validate = true;
+            acc.signed_by_id = actor_id;
+            acc.signed_at = at;
+            if !form_values_raw.trim().is_empty() && form_values_raw.trim() != "{}" {
+                acc.form_values_raw = form_values_raw;
+            }
+        }
+    }
+
+    let mut steps = Vec::new();
+    for (step_index, acc) in by_step {
+        let filled_by = stock_user_display_label(&mut conn, &acc.filled_by_id).await;
+        let signed_by = stock_user_display_label(&mut conn, &acc.signed_by_id).await;
+        steps.push(json!({
+            "stepIndex": step_index,
+            "stepTitle": acc.step_title,
+            "fieldsJson": acc.fields_json,
+            "formValues": parse_form_values_json(&acc.form_values_raw),
+            "filledBy": filled_by,
+            "filledAt": acc.filled_at,
+            "signedBy": signed_by,
+            "signedAt": acc.signed_at,
+            "updatedAt": if acc.signed_at.is_empty() { acc.filled_at.clone() } else { acc.signed_at.clone() },
+        }));
+    }
+    enc(&json!({ "steps": steps }))
+}
+
 #[tauri::command]
 pub async fn stock_list_collab_tasks(payload: String) -> Result<Value, String> {
     let p = parse_or_empty(&payload);
@@ -5222,7 +5984,7 @@ pub async fn stock_list_collab_tasks(payload: String) -> Result<Value, String> {
     let requester_role_id = stock_user_role_id(&mut conn, requester_user_id).await?;
 
     let rows = sqlx::query::<Any>(
-        "SELECT id, title, description, at, status, kind, visibility, created_by_user_id, visible_role_id, circuit_id, circuit_step_index, created_at, updated_at FROM stock_collab_task WHERE status = 'pending' ORDER BY at ASC",
+        "SELECT id, title, description, at, status, kind, visibility, created_by_user_id, visible_role_id, circuit_id, circuit_step_index, created_at, updated_at, IFNULL(form_values_json,'{}') FROM stock_collab_task WHERE status = 'pending' ORDER BY at ASC",
     )
     .fetch_all(&mut conn)
     .await
@@ -5243,6 +6005,7 @@ pub async fn stock_list_collab_tasks(payload: String) -> Result<Value, String> {
         let circuit_step_index: i64 = r.try_get(10).unwrap_or(-1);
         let created_at: String = r.try_get(11).unwrap_or_default();
         let updated_at: String = r.try_get(12).unwrap_or_default();
+        let form_values_raw: String = r.try_get(13).unwrap_or_else(|_| "{}".to_string());
         if !collab_task_visible_to(
             requester_is_sadmin,
             requester_user_id,
@@ -5273,6 +6036,27 @@ pub async fn stock_list_collab_tasks(payload: String) -> Result<Value, String> {
                 })
             })
             .collect();
+        let mut form_values = parse_form_values_json(&form_values_raw);
+        // Reprise : tâches de validation créées avant la persistance, ou valeurs manquantes.
+        if kind == "circuit_validate"
+            && form_values.as_object().map(|o| o.is_empty()).unwrap_or(true)
+            && !circuit_id.is_empty()
+            && circuit_step_index >= 0
+        {
+            if let Ok(Some(prev)) = sqlx::query::<Any>(
+                r#"SELECT IFNULL(form_values_json,'{}') FROM stock_collab_task
+                   WHERE circuit_id = ?1 AND circuit_step_index = ?2 AND kind = 'circuit_fill' AND status = 'done'
+                   ORDER BY updated_at DESC LIMIT 1"#,
+            )
+            .bind(&circuit_id)
+            .bind(circuit_step_index)
+            .fetch_optional(&mut conn)
+            .await
+            {
+                let raw: String = prev.try_get(0).unwrap_or_else(|_| "{}".to_string());
+                form_values = parse_form_values_json(&raw);
+            }
+        }
         list.push(json!({
             "id": id,
             "title": title,
@@ -5287,6 +6071,7 @@ pub async fn stock_list_collab_tasks(payload: String) -> Result<Value, String> {
             "circuitStepIndex": circuit_step_index,
             "createdAt": created_at,
             "updatedAt": updated_at,
+            "formValues": form_values,
             "history": history,
         }));
     }
@@ -5453,13 +6238,18 @@ pub async fn stock_complete_collab_task(payload: String) -> Result<Value, String
         return Err("Action non autorisée".to_string());
     }
 
+    let form_values_json = serialize_form_values_json(obj.get("formValues"));
+
     let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let u = sqlx::query::<Any>("UPDATE stock_collab_task SET status = 'done', updated_at = ?1 WHERE id = ?2")
-        .bind(&now)
-        .bind(id)
-        .execute(&mut conn)
-        .await
-        .map_err(|e| e.to_string())?;
+    let u = sqlx::query::<Any>(
+        "UPDATE stock_collab_task SET status = 'done', form_values_json = ?1, updated_at = ?2 WHERE id = ?3",
+    )
+    .bind(&form_values_json)
+    .bind(&now)
+    .bind(id)
+    .execute(&mut conn)
+    .await
+    .map_err(|e| e.to_string())?;
     let _ = collab_task_log_action(
         &mut conn,
         id,
@@ -5496,8 +6286,8 @@ pub async fn stock_complete_collab_task(payload: String) -> Result<Value, String
                     let new_id = Uuid::new_v4().to_string();
                     let at = Utc::now().to_rfc3339();
                     sqlx::query::<Any>(
-                        r#"INSERT INTO stock_collab_task (id, title, description, at, status, kind, visibility, created_by_user_id, visible_role_id, circuit_id, circuit_step_index, created_at, updated_at)
-                           VALUES (?1, ?2, '', ?3, 'pending', 'circuit_validate', 'role', ?4, ?5, ?6, ?7, ?8, ?9)"#,
+                        r#"INSERT INTO stock_collab_task (id, title, description, at, status, kind, visibility, created_by_user_id, visible_role_id, circuit_id, circuit_step_index, form_values_json, created_at, updated_at)
+                           VALUES (?1, ?2, '', ?3, 'pending', 'circuit_validate', 'role', ?4, ?5, ?6, ?7, ?8, ?9, ?10)"#,
                     )
                     .bind(&new_id)
                     .bind(&title)
@@ -5506,6 +6296,7 @@ pub async fn stock_complete_collab_task(payload: String) -> Result<Value, String
                     .bind(validate_role_id.trim())
                     .bind(&circuit_id)
                     .bind(circuit_step_index)
+                    .bind(&form_values_json)
                     .bind(&now)
                     .bind(&now)
                     .execute(&mut conn)

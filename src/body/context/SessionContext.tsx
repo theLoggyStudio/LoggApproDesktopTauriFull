@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, type ReactNode, useEffect } from "react";
 
 export type SessionUser = {
   id: string;
@@ -59,3 +59,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 export function useSession() {
   return useContext(SessionContext);
 }
+
+
+
+

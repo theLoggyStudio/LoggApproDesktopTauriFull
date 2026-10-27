@@ -27,7 +27,7 @@
     "stockMenu": [
       "Tableau de bord",
       "Articles",
-      "Entrepôt",
+      "Emplacement",
       "Mouvements",
       "Fournisseurs",
       "Clients",
@@ -48,7 +48,7 @@
       "Liste des circuits",
       "Créer un circuit",
       "Formulaires",
-      "Remplir un formulaire"
+      "Remplir un circuit"
     ],
     "stockDashboard": [
       "Vue d'ensemble de votre stock",
@@ -72,7 +72,8 @@
       "Imprimer : derniers mouvements",
       "Imprimer : stocks par catégorie",
       "Imprimer",
-      "Voir tous les mouvements"
+      "Voir tous les mouvements",
+      "Transfert d'emplacement"
     ],
     "stockDataIo": [
       "Importer (CSV)",
@@ -117,33 +118,33 @@
       "Devises",
       "Liste, recherche et fiche article.",
       "Les choix d'unité proviennent de l'onglet « Unités ».",
-      "Les emplacements se gèrent par entrepôt (menu « Entrepôt ») ; la liste sur la fiche article indique l'entrepôt.",
+      "Les emplacements se gèrent dans le menu « Emplacement » ; la liste sur la fiche article indique l'emplacement.",
       "Les catégories se gèrent dans l'onglet « Catégories ».",
       "Les devises se gèrent dans l'onglet « Devises » (libellé affiché sur la fiche article, ex. EUR).",
       "Sous-écran"
     ],
     "stockWarehouseNav": [
-      "Vue par entrepôt",
-      "Entrepôt",
+      "Vue par emplacement",
+      "Emplacement",
       "Sous-écran",
-      "Entrepôt à afficher",
-      "Nouvel entrepôt",
-      "Chargement des entrepôts…",
-      "Créer un entrepôt",
+      "Emplacement à afficher",
+      "Nouvel emplacement",
+      "Chargement des emplacements…",
+      "Créer un emplacement",
       "Libellé",
       "Code (facultatif)",
       "Enregistrer",
       "Annuler",
-      "Entrepôt enregistré.",
+      "Emplacement enregistré.",
       "Libellé requis.",
-      "Créez d'abord un entrepôt (menu « Entrepôt »), puis réessayez.",
-      "Aucun entrepôt : utilisez le bouton « Nouvel entrepôt » pour en ajouter un.",
-      "Imprimer : entrepôts",
-      "Modifier l’entrepôt",
-      "Supprimer l’entrepôt",
-      "Entrepôt modifié.",
-      "Entrepôt supprimé.",
-      "Supprimer cet entrepôt ? Les emplacements associés doivent être supprimés au préalable."
+      "Créez d'abord un emplacement (menu « Emplacement »), puis réessayez.",
+      "Aucun emplacement : utilisez le bouton « Nouvel emplacement » pour en ajouter un.",
+      "Imprimer : emplacements",
+      "Modifier l’emplacement",
+      "Supprimer l’emplacement",
+      "Emplacement modifié.",
+      "Emplacement supprimé.",
+      "Supprimer cet emplacement ? Les emplacements associés doivent être supprimés au préalable."
     ],
     "stockArticleUnits": [
       "Unités de mesure",
@@ -159,11 +160,15 @@
       "Enregistrement effectué.",
       "Libellé requis.",
       "Suppression effectuée.",
-      "Imprimer : unités"
+      "Imprimer : unités",
+      "Type",
+      "Float",
+      "Numérique",
+      "Alphanumérique"
     ],
     "stockArticleLocations": [
       "Emplacements",
-      "Définissez les emplacements ou zones proposés pour les articles (écran Entrepôt).",
+      "Définissez les emplacements ou zones proposés pour les articles (écran Emplacement).",
       "Ajouter un emplacement",
       "Libellé",
       "Code (facultatif)",
@@ -292,7 +297,17 @@
       "au",
       "Filtrer par type",
       "Tous les types",
-      "Réinitialiser les filtres"
+      "Réinitialiser les filtres",
+      "Transfert d'emplacement",
+      "Emplacement source",
+      "Emplacement destination",
+      "Choisissez l'emplacement source",
+      "Choisissez l'emplacement destination",
+      "Les emplacements source et destination doivent être différents.",
+      "Glissez-déposez vos images (PNG, JPEG) ou cliquez pour parcourir",
+      "Retirer le fichier",
+      "Dispo. emplacement",
+      "Quantité supérieure au stock de l'emplacement source."
     ],
     "stockSettingsDb": [
       "Connexion base distante",
@@ -431,9 +446,13 @@
       "Documents",
       "Tiers",
       "Références",
-      "Entrepôt",
+      "Emplacement",
       "Tableau de bord — mouvements récents",
-      "Tableau de bord — stocks par catégorie"
+      "Tableau de bord — stocks par catégorie",
+      "Variables de l'écran",
+      "Aucune variable",
+      "Ajoutez des variables au format {{ nom }} dans le HTML ou le CSS.",
+      "Accès refusé."
     ],
     "stockUser": [
       "Collaborateur",
@@ -480,7 +499,7 @@
       "Mot de passe par défaut pour les nouveaux comptes (si le champ mot de passe est vide)",
       "Laisser vide pour conserver le mot de passe actuel.",
       "Sélectionnez au moins un accès.",
-      "Entrepôt",
+      "Emplacement",
       "Graphiques (tableau de bord)",
       "Import articles (CSV)",
       "Export articles (CSV)",
@@ -507,7 +526,7 @@
       "Suppression documents (PDF)",
       "Import catégories articles (CSV)",
       "Export catégories articles (CSV)",
-      "Voir les emplacements (liste, écran Entrepôt, fiche article)",
+      "Voir les emplacements (liste, écran Emplacement, fiche article)",
       "Créer des emplacements",
       "Modifier des emplacements",
       "Supprimer des emplacements",
@@ -588,8 +607,8 @@
       "Client (sélection stock)",
       "Mouvement (sélection stock)",
       "Document (sélection stock)",
-      "Entrepôt (sélection stock)",
       "Emplacement (sélection stock)",
+      "Zone (sélection stock)",
       "Circuit (sélection stock)",
       "Rôle (sélection stock)",
       "Si aucun rôle n’est sélectionné, le rôle Direction (créé à l’installation) est appliqué automatiquement pour remplir ce formulaire ou valider l’étape précédente."
@@ -617,9 +636,17 @@
       "Type d’écran requis."
     ],
     "stockCircuitFill": [
-      "Remplir un formulaire",
-      "Ouvrez une tâche de remplissage ou de validation pour afficher le formulaire du circuit, puis marquez-la comme traitée.",
-      "Ouvrir"
+      "Remplir un circuit",
+      "Choisissez un circuit pour démarrer le remplissage de la première étape, ou ouvrez une tâche de remplissage déjà créée.",
+      "Ouvrir",
+      "Démarrer le remplissage",
+      "Circuits disponibles",
+      "Tâches de remplissage en cours",
+      "Aucun circuit disponible pour votre rôle.",
+      "Aucune tâche de remplissage en cours.",
+      "Ce circuit est inactif.",
+      "Actif",
+      "Inactif"
     ],
     "stockCircuitTaskForm": [
       "Remplir le formulaire",
@@ -630,7 +657,14 @@
       "J’atteste avoir relu et validé le contenu affiché.",
       "Cochez l’attestation pour valider.",
       "Remplissez tous les champs obligatoires.",
-      "Tâche marquée comme traitée."
+      "Tâche marquée comme traitée.",
+      "Informations déjà validées",
+      "Aucune information validée pour le moment.",
+      "Étape",
+      "Remplisseur",
+      "Date de remplissage",
+      "Date de signature",
+      "Signataire"
     ],
     "stockRoles": [
       "Rôles collaborateurs",
